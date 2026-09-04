@@ -89,6 +89,9 @@ Flags principales (`vozgo transcribe -h` para la lista completa):
 | `-prompt` | — | Prompt inicial para sesgar vocabulario |
 | `-prompt-file` | — | Archivo con el prompt (`prompts/es-CO.txt`) |
 | `-translate` | `false` | Traduce a inglés en vez de transcribir |
+| `-merge` | — | Junta todo en un solo archivo, en orden |
+| `-merge-plain` | `false` | En el archivo unido, sin encabezado por audio |
+| `-skip-duplicates` | `true` | No transcribe dos veces archivos idénticos |
 | `-stdout` | `false` | Imprime el texto en vez de escribir archivos |
 | `-recursive` | `true` | Recorre subdirectorios |
 
@@ -103,7 +106,16 @@ vozgo transcribe -stdout -lang es "WhatsApp Ptt 2026-09-04 at 09.50.31.ogg" | le
 
 # vocabulario propio (nombres, jerga) con prompt inicial
 vozgo transcribe -lang es -prompt "Jaime, Adipa, Keycloak, Moodle" ./audios
+
+# una tanda de notas encadenadas -> un solo texto, en orden cronológico
+vozgo transcribe -lang es -merge conversacion.md ./notas-del-dia
 ```
+
+Con `-merge`, las notas se escriben en el orden en que se pasaron (para las notas
+de WhatsApp, el nombre ya es la marca de tiempo, así que ordenar por nombre es
+ordenar por hora). Los archivos idénticos —la misma nota descargada dos veces,
+`audio.ogg` y `audio (1).ogg`— se detectan por hash y se transcriben una sola vez;
+se conserva el del nombre original.
 
 Sale con código ≠ 0 si algún archivo falló, así se puede usar en scripts.
 

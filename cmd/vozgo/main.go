@@ -3,10 +3,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -111,10 +115,13 @@ func cmdTranscribe(ctx context.Context, args []string) error {
 	cfg.ApplyEnv()
 
 	fset := flag.NewFlagSet("transcribe", flag.ContinueOnError)
-	var formats, outDir string
-	var recursive, quiet, stdout bool
+	var formats, outDir, mergeTo string
+	var recursive, quiet, stdout, mergePlain, skipDuplicates bool
 	bindCommon(fset, &cfg, &formats)
 	fset.StringVar(&outDir, "out", "", "directorio de salida (vacío = junto al audio)")
+	fset.StringVar(&mergeTo, "merge", "", "junta todas las transcripciones en un solo archivo, en orden")
+	fset.BoolVar(&mergePlain, "merge-plain", false, "en el archivo unido, sin encabezados por audio")
+	fset.BoolVar(&skipDuplicates, "skip-duplicates", true, "no transcribir dos veces archivos idénticos")
 	fset.BoolVar(&recursive, "recursive", true, "recorrer subdirectorios")
 	fset.BoolVar(&stdout, "stdout", false, "imprimir el texto en stdout en vez de escribir archivos")
 	fset.BoolVar(&quiet, "quiet", false, "sin progreso, solo errores")
@@ -133,6 +140,13 @@ func cmdTranscribe(ctx context.Context, args []string) error {
 	}
 	if len(inputs) == 0 {
 		return errors.New("no se encontraron audios; pasa archivos o un directorio")
+	}
+	if skipDuplicates {
+		var dropped []string
+		inputs, dropped = dedupe(inputs)
+		for _, d := range dropped {
+			fmt.Fprintf(os.Stderr, "vozgo: %s es idéntico a otro archivo, se omite\n", filepath.Base(d))
+		}
 	}
 
 	svc, err := transcribe.New(cfg)
@@ -198,6 +212,14 @@ func cmdTranscribe(ctx context.Context, args []string) error {
 			}
 			fmt.Println(snap.Text)
 		}
+	}
+
+	if mergeTo != "" {
+		written, err := mergeTranscripts(svc, ids, mergeTo, mergePlain)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "unido: %d transcripciones en %s\n", written, mergeTo)
 	}
 
 	st := svc.Stats()
@@ -330,6 +352,91 @@ func cmdWER(args []string) error {
 		}
 	}
 	return nil
+}
+
+// mergeTranscripts escribe todas las transcripciones en un solo archivo,
+// respetando el orden en que se pasaron los audios. Un trabajo fallido no
+// interrumpe el archivo: se anota y se sigue, para no perder lo que sí salió.
+func mergeTranscripts(svc *transcribe.Service, ids []string, path string, plain bool) (int, error) {
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return 0, fmt.Errorf("creando %s: %w", dir, err)
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return 0, fmt.Errorf("creando %s: %w", path, err)
+	}
+	defer f.Close()
+
+	w := bufio.NewWriter(f)
+	written := 0
+	for _, id := range ids {
+		snap, ok := svc.Get(id)
+		if !ok {
+			continue
+		}
+		if snap.Status != transcribe.StatusDone {
+			if !plain {
+				fmt.Fprintf(w, "## %s\n\n[sin transcripción: %s]\n\n", snap.Filename, snap.Err)
+			}
+			continue
+		}
+		if !plain {
+			header := snap.Filename
+			if d := time.Duration(snap.DurationMS) * time.Millisecond; d > 0 {
+				header = fmt.Sprintf("%s (%s)", header, d.Round(time.Second))
+			}
+			fmt.Fprintf(w, "## %s\n\n", header)
+		}
+		fmt.Fprintf(w, "%s\n\n", snap.Text)
+		written++
+	}
+	if err := w.Flush(); err != nil {
+		return 0, err
+	}
+	return written, nil
+}
+
+// dedupe descarta archivos con contenido idéntico, que es lo que pasa cuando se
+// descarga dos veces la misma nota ("audio.ogg" y "audio (1).ogg"). De cada
+// grupo conserva el del nombre más corto, que es el original y no la copia, sin
+// alterar el orden de la lista.
+func dedupe(paths []string) (kept, dropped []string) {
+	at := make(map[string]int, len(paths)) // hash -> posición en kept
+	for _, p := range paths {
+		sum, err := hashFile(p)
+		if err != nil {
+			kept = append(kept, p) // si no se puede leer, que falle al transcribir
+			continue
+		}
+		i, dup := at[sum]
+		if !dup {
+			at[sum] = len(kept)
+			kept = append(kept, p)
+			continue
+		}
+		if len(filepath.Base(p)) < len(filepath.Base(kept[i])) {
+			dropped = append(dropped, kept[i])
+			kept[i] = p
+			continue
+		}
+		dropped = append(dropped, p)
+	}
+	return kept, dropped
+}
+
+func hashFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // collect expands the CLI arguments into a sorted, de-duplicated file list.
