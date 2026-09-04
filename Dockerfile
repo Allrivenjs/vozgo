@@ -11,6 +11,11 @@ ARG WHISPER_VERSION=v1.9.3
 ARG CUDA_IMAGE=12.6.2
 # 75 = Turing (GTX 16xx / RTX 20xx). 86 = Ampere, 89 = Ada, 61 = Pascal.
 ARG CUDA_ARCH=75
+# Trabajos de compilación paralelos. nvcc pide ~2 GB por trabajo, así que el
+# stage CUDA usa pocos: con -j"$(nproc)" el daemon de Docker se queda sin
+# memoria ("cannot allocate memory") en máquinas con poca RAM asignada.
+ARG BUILD_JOBS=0
+ARG CUDA_BUILD_JOBS=2
 
 # ---------------------------------------------------------------- go binary ---
 FROM golang:${GO_VERSION}-bookworm AS go-build
@@ -27,21 +32,23 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
 FROM nvidia/cuda:${CUDA_IMAGE}-devel-ubuntu24.04 AS whisper-cuda
 ARG WHISPER_VERSION
 ARG CUDA_ARCH
+ARG CUDA_BUILD_JOBS
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git cmake build-essential ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch ${WHISPER_VERSION} \
         https://github.com/ggml-org/whisper.cpp /whisper
 WORKDIR /whisper
-RUN cmake -B build \
+RUN set -eu; \
+    cmake -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         -DGGML_CUDA=1 \
         -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCH}" \
         -DWHISPER_BUILD_TESTS=OFF \
-        -DWHISPER_BUILD_SERVER=OFF \
-    && cmake --build build -j"$(nproc)" --config Release --target whisper-cli \
-    && cp build/bin/whisper-cli /usr/local/bin/whisper-cli
+        -DWHISPER_BUILD_SERVER=OFF; \
+    cmake --build build -j"${CUDA_BUILD_JOBS}" --config Release --target whisper-cli; \
+    cp build/bin/whisper-cli /usr/local/bin/whisper-cli
 
 # --------------------------------------------------------- runtime  (CUDA) ----
 FROM nvidia/cuda:${CUDA_IMAGE}-runtime-ubuntu24.04 AS cuda
@@ -69,19 +76,23 @@ CMD ["serve"]
 # -------------------------------------------------------- whisper.cpp (CPU) ---
 FROM debian:bookworm-slim AS whisper-cpu
 ARG WHISPER_VERSION
+ARG BUILD_JOBS
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git cmake build-essential ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch ${WHISPER_VERSION} \
         https://github.com/ggml-org/whisper.cpp /whisper
 WORKDIR /whisper
-RUN cmake -B build \
+RUN set -eu; \
+    jobs="${BUILD_JOBS}"; \
+    if [ "$jobs" = "0" ]; then jobs="$(nproc)"; fi; \
+    cmake -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         -DWHISPER_BUILD_TESTS=OFF \
-        -DWHISPER_BUILD_SERVER=OFF \
-    && cmake --build build -j"$(nproc)" --config Release --target whisper-cli \
-    && cp build/bin/whisper-cli /usr/local/bin/whisper-cli
+        -DWHISPER_BUILD_SERVER=OFF; \
+    cmake --build build -j"$jobs" --config Release --target whisper-cli; \
+    cp build/bin/whisper-cli /usr/local/bin/whisper-cli
 
 # ----------------------------------------------------------- runtime  (CPU) ---
 # Last stage on purpose: a plain `docker build .` produces the portable image.

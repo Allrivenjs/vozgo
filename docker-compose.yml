@@ -13,8 +13,9 @@ x-common: &common
     VOZGO_MODEL: /models/${VOZGO_MODEL_NAME:-ggml-base.bin}
     VOZGO_LANGUAGE: ${VOZGO_LANGUAGE:-auto}
     VOZGO_FORMATS: ${VOZGO_FORMATS:-txt}
-    VOZGO_WORKERS: ${VOZGO_WORKERS:-2}
-    VOZGO_THREADS: ${VOZGO_THREADS:-4}
+    # Vacíos = vozgo los calcula según CPU y memoria disponible.
+    VOZGO_WORKERS: ${VOZGO_WORKERS:-}
+    VOZGO_THREADS: ${VOZGO_THREADS:-}
     VOZGO_TEMP_DIR: /data/tmp
   volumes:
     - ./models:/models
@@ -50,6 +51,7 @@ services:
       args:
         VERSION: ${VOZGO_VERSION:-dev}
         CUDA_ARCH: ${CUDA_ARCH:-75}
+        CUDA_BUILD_JOBS: ${CUDA_BUILD_JOBS:-2}
     image: vozgo:cuda
     ports:
       - "${VOZGO_PORT:-8080}:8080"

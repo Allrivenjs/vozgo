@@ -29,7 +29,8 @@ docker: ## imagen CPU
 
 docker-cuda: ## imagen CUDA (CUDA_ARCH=75 para GTX 16xx/RTX 20xx)
 	docker build --target cuda --build-arg VERSION=$(VERSION) \
-		--build-arg CUDA_ARCH=$(or $(CUDA_ARCH),75) -t vozgo:cuda .
+		--build-arg CUDA_ARCH=$(or $(CUDA_ARCH),75) \
+		--build-arg CUDA_BUILD_JOBS=$(or $(CUDA_BUILD_JOBS),2) -t vozgo:cuda .
 
 up:
 	docker compose --profile cpu up --build

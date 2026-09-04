@@ -187,12 +187,28 @@ pipeline completo, incluidas las rutas HTTP.
   baja los workers para no morir por OOM. Si fijas `-workers` a mano y no cabe, vozgo
   avisa por stderr.
 
-Medido en esta máquina (16 hilos, CPU, sin GPU), notas reales de WhatsApp:
+### Calidad medida
 
-| Modelo | Audio | Tiempo | Calidad en español |
+Notas de voz reales de WhatsApp (español, audio de trabajo con jerga y siglas),
+comparadas contra transcripción humana con `scripts/wer.py` (WER = word error rate,
+menos es mejor; se normalizan mayúsculas, tildes y puntuación):
+
+| Nota | `base` | `small` | `small` + `-prompt` |
 |---|---|---|---|
-| `base` | 3 notas / ~3 min total | 8,5 s (3 workers × 4 hilos) | Entendible, se come nombres y siglas |
-| `small` | 42 s | 23,6 s (1 worker × 16 hilos) | Bastante buena, recomendado |
+| 26 s / 83 palabras | 18,1 % | 9,6 % | **7,2 %** |
+| 112 s / 384 palabras | 25,5 % | **13,3 %** | 13,3 % |
+
+`small` corta el error a la mitad frente a `base` y es el punto dulce en CPU. El
+`-prompt` con el vocabulario del dominio (nombres propios, siglas) ayuda sobre todo
+en audios cortos, donde whisper tiene poco contexto propio del que agarrarse.
+
+```bash
+python3 scripts/wer.py <dir>   # espera <dir>/ref/*.txt y <dir>/<modelo>/*.txt
+```
+
+Velocidad en esta máquina (16 hilos, CPU, sin GPU): `base` transcribe 3 notas
+(~3 min de audio) en 8,5 s con 3 workers × 4 hilos; `small` va a ~0,5× tiempo real
+con 1 worker × 16 hilos.
 
 Si el daemon de Docker corre con poca RAM (aquí eran 3 GB: `docker info` →
 `MemTotal`), `medium` y `large` no caben con varios workers. Amplía la memoria del
@@ -203,9 +219,17 @@ daemon o quédate en `small`.
 - whisper.cpp solo lee WAV PCM de 16 kHz; por eso ffmpeg es obligatorio.
 - Los WAV intermedios viven en `VOZGO_TEMP_DIR` y se borran al terminar
   (`-keep-wav` los conserva para depurar).
-- El target `cuda` compila whisper.cpp con `GGML_CUDA=1`, pero **no está probado
-  todavía**: requiere `nvidia-container-toolkit` instalado en el host
-  (en Arch: `sudo pacman -S nvidia-container-toolkit`).
+- El target `cuda` compila whisper.cpp con `GGML_CUDA=1`, pero **no está probado en
+  ejecución**: requiere `nvidia-container-toolkit` en el host (en Arch:
+  `sudo pacman -S nvidia-container-toolkit`).
+- **Compilar el target `cuda` necesita RAM**: nvcc usa ~2 GB por trabajo paralelo y
+  con `-j$(nproc)` el build muere con `cannot allocate memory`. Por eso el stage CUDA
+  usa `CUDA_BUILD_JOBS=2` por defecto; bájalo a `1` si tu daemon tiene poca memoria:
+
+  ```bash
+  make docker-cuda CUDA_BUILD_JOBS=1
+  # o: CUDA_BUILD_JOBS=1 docker compose --profile cuda build
+  ```
 - La UI hace polling cada 1,5 s; no hay websockets ni estado en disco: los trabajos
   viven en memoria y se pierden al reiniciar el contenedor (las descargas ya hechas,
   no).

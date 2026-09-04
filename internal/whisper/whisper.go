@@ -17,18 +17,20 @@ import (
 	"time"
 )
 
-// Segment is one timestamped chunk of transcribed speech.
+// Segment is one timestamped chunk of transcribed speech. It is an internal
+// value: the package/format renders the wire formats, so there are no JSON tags
+// here to imply a serialization contract this type does not have.
 type Segment struct {
-	Start time.Duration `json:"start_ms"`
-	End   time.Duration `json:"end_ms"`
-	Text  string        `json:"text"`
+	Start time.Duration
+	End   time.Duration
+	Text  string
 }
 
 // Result is the full transcription of a single audio file.
 type Result struct {
-	Language string    `json:"language"`
-	Model    string    `json:"model"`
-	Segments []Segment `json:"segments"`
+	Language string
+	Model    string
+	Segments []Segment
 }
 
 // Text joins every segment into a single paragraph.
@@ -95,7 +97,6 @@ func (r Runner) Transcribe(ctx context.Context, wavPath, workDir string) (Result
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stderr = &stderr
-	cmd.Stdout = nil
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return Result{}, ctx.Err()
