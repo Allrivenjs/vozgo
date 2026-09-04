@@ -163,9 +163,9 @@ curl -N http://localhost:8080/api/events
 |---|---|---|---|
 | `tiny` | 75 MB | ~0,3 GB | Muy rápido, calidad pobre en español |
 | `base` | 142 MB | ~0,5 GB | Decente para notas cortas |
-| `small` | 466 MB | **1,3 GB medido** | Buen equilibrio en CPU, el recomendado |
-| `medium` | 1,5 GB | ~4 GB | Mejor calidad, pesado en CPU |
-| `large-v3-turbo` | 1,6 GB | ~4 GB | Lo mejor si hay GPU |
+| `small` | 466 MB | **1,3 GB medido** | El techo si el contenedor tiene ~2 GB |
+| `medium` | 1,5 GB | **3,8 GB medido** | Peor relación que turbo: más lento y menos preciso |
+| `large-v3-turbo` | 1,6 GB | **3,4 GB medido** | **El recomendado** si hay 4 GB disponibles |
 
 **La RAM manda, y con margen**: whisper necesita cerca de **3× el tamaño del `.bin`**
 (medido: `small`, 466 MB de archivo, llega a 1337 MiB de pico). Si el contenedor no
@@ -281,14 +281,21 @@ Notas de voz reales de WhatsApp (español, audio de trabajo con jerga y siglas),
 comparadas contra transcripción humana con `scripts/wer.py` (WER = word error rate,
 menos es mejor; se normalizan mayúsculas, tildes y puntuación):
 
-| Nota | `base` | `small` | `small` + prompt genérico | `small` + **es-CO** |
-|---|---|---|---|---|
-| 26 s / 83 palabras | 18,1 % | 9,6 % | 7,2 % | **4,8 %** |
-| 112 s / 384 palabras | 25,5 % | 13,3 % | 13,3 % | **11,2 %** |
+Todo con el prompt `es-CO`, en CPU (16 hilos), sobre 138 s de audio:
 
-`small` corta el error a la mitad frente a `base`, y el prompt de dialecto lo vuelve
-a bajar casi a la mitad: es la mejora más barata que hay, no cuesta ni un byte de
-RAM extra.
+| Modelo | WER nota corta | WER nota larga | Tiempo | Pico de RAM |
+|---|---|---|---|---|
+| `base` | 18,1 % | 25,5 % | 8 s | ~0,5 GB |
+| `small` | 4,8 % | 11,2 % | 16 s | 1,3 GB |
+| `medium` | 3,6 % | 10,7 % | 66 s | 3,8 GB |
+| **`large-v3-turbo`** | **1,2 %** | **5,5 %** | **27 s** | 3,4 GB |
+
+`large-v3-turbo` gana en las dos cosas: **la mitad de error que `small` y más rápido
+que `medium`** (tiene menos capas de decodificador, por eso adelanta a un modelo más
+pequeño). Si tienes 4 GB para el contenedor, es la elección obvia.
+
+El prompt de dialecto sigue siendo la mejora más barata: sin él, `small` daba 9,6 %
+y 13,3 %; con él, 4,8 % y 11,2 %, sin gastar un byte más de RAM.
 
 Mídelo tú mismo con el propio binario:
 
