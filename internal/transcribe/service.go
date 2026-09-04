@@ -142,6 +142,9 @@ type Service struct {
 	// OnEvent, when set, is called on every status transition. Used by the CLI
 	// to print progress. It must not block for long.
 	OnEvent func(Snapshot)
+
+	subsMu sync.Mutex
+	subs   map[chan Snapshot]struct{}
 }
 
 // New validates the config and builds a Service. Call Start before Submit.
@@ -172,6 +175,44 @@ func New(cfg config.Config) (*Service, error) {
 		maxJobs: cfg.MaxJobs,
 		jobTTL:  cfg.JobTTL,
 	}, nil
+}
+
+// Subscribe returns a channel of status transitions and a function to stop
+// listening. The HTTP layer uses it to push updates over SSE instead of having
+// the browser poll.
+//
+// Sends are non-blocking: a subscriber that falls behind loses events rather
+// than stalling a worker. Losing one is harmless because every event carries
+// the job's full state, and the UI refetches the list on any event.
+func (s *Service) Subscribe(buffer int) (<-chan Snapshot, func()) {
+	if buffer <= 0 {
+		buffer = 32
+	}
+	ch := make(chan Snapshot, buffer)
+	s.subsMu.Lock()
+	if s.subs == nil {
+		s.subs = make(map[chan Snapshot]struct{})
+	}
+	s.subs[ch] = struct{}{}
+	s.subsMu.Unlock()
+
+	var once sync.Once
+	cancel := func() {
+		once.Do(func() {
+			s.subsMu.Lock()
+			delete(s.subs, ch)
+			s.subsMu.Unlock()
+			close(ch)
+		})
+	}
+	return ch, cancel
+}
+
+// Subscribers reports how many SSE listeners are attached, for tests and health.
+func (s *Service) Subscribers() int {
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	return len(s.subs)
 }
 
 // Config returns the effective configuration, for /healthz and logs.
@@ -469,13 +510,29 @@ func (s *Service) prune() {
 }
 
 func (s *Service) emit(job *Job) {
-	if s.OnEvent == nil {
+	s.subsMu.Lock()
+	hasSubs := len(s.subs) > 0
+	s.subsMu.Unlock()
+	if s.OnEvent == nil && !hasSubs {
 		return
 	}
+
 	s.mu.RLock()
 	snap := job.snapshot()
 	s.mu.RUnlock()
-	s.OnEvent(snap)
+
+	if s.OnEvent != nil {
+		s.OnEvent(snap)
+	}
+
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	for ch := range s.subs {
+		select {
+		case ch <- snap:
+		default: // subscriber behind; drop rather than block the worker
+		}
+	}
 }
 
 func newID() string {

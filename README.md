@@ -115,6 +115,7 @@ Sale con código ≠ 0 si algún archivo falló, así se puede usar en scripts.
 | `GET` | `/api/health`, `/healthz` | Estado, modelo, workers |
 | `POST` | `/api/transcribe` | `multipart/form-data`, uno o varios archivos → jobs |
 | `GET` | `/api/jobs` | Lista de trabajos, más recientes primero |
+| `GET` | `/api/events` | Stream SSE: un evento por cambio de estado |
 | `GET` | `/api/jobs/{id}` | Estado + texto del trabajo |
 | `GET` | `/api/jobs/{id}/download?format=srt` | Descarga en el formato pedido |
 | `DELETE` | `/api/jobs/{id}` | Olvida el trabajo |
@@ -130,8 +131,15 @@ curl -sS http://localhost:8080/api/jobs | jq '.jobs[] | {filename, status, text}
 curl -sSO -J "http://localhost:8080/api/jobs/<id>/download?format=srt"
 ```
 
-La transcripción es asíncrona: `POST` responde `202` con los `job_id`, y el estado se
-consulta por polling (la UI lo hace cada 1,5 s).
+La transcripción es asíncrona: `POST` responde `202` con los `job_id` y el progreso
+llega por `/api/events` (server-sent events), que es lo que usa la UI. Si el stream
+no está disponible, la UI cae a polling sola.
+
+```bash
+curl -N http://localhost:8080/api/events
+# event: job
+# data: {"id":"...","filename":"nota.ogg","status":"running",...}
+```
 
 ## Modelos
 
@@ -263,9 +271,8 @@ modelos grandes, o quédate en `small`, que es el punto dulce.
   make docker-cuda CUDA_BUILD_JOBS=1
   # o: CUDA_BUILD_JOBS=1 docker compose --profile cuda build
   ```
-- La UI hace polling cada 1,5 s; no hay websockets ni estado en disco: los trabajos
-  viven en memoria y se pierden al reiniciar el contenedor (las descargas ya hechas,
-  no).
+- No hay estado en disco: los trabajos viven en memoria y se pierden al reiniciar el
+  contenedor (los archivos ya escritos, no).
 
 ## Licencia
 

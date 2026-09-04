@@ -83,7 +83,7 @@
 <script>
 const $ = (s) => document.querySelector(s);
 const drop = $("#drop"), fileInput = $("#file"), jobsEl = $("#jobs"), emptyEl = $("#empty");
-let polling = null;
+let polling = null, events = null, pending = null;
 
 async function health() {
   try {
@@ -157,9 +157,33 @@ async function refresh() {
   const { jobs } = await r.json();
   jobsEl.replaceChildren(...jobs.map(jobNode));
   emptyEl.hidden = jobs.length > 0;
-  const busy = jobs.some(j => j.status === "queued" || j.status === "running");
-  if (busy && !polling) polling = setInterval(refresh, 1500);
-  if (!busy && polling) { clearInterval(polling); polling = null; }
+  // Polling is only the fallback for when the event stream is unavailable.
+  if (!events) {
+    const busy = jobs.some(j => j.status === "queued" || j.status === "running");
+    if (busy && !polling) polling = setInterval(refresh, 1500);
+    if (!busy && polling) { clearInterval(polling); polling = null; }
+  }
+}
+
+// Several jobs change state at once; coalesce them into one refetch.
+function scheduleRefresh() {
+  clearTimeout(pending);
+  pending = setTimeout(refresh, 150);
+}
+
+function connectEvents() {
+  if (!window.EventSource) return;
+  const es = new EventSource("/api/events");
+  es.addEventListener("job", scheduleRefresh);
+  es.addEventListener("open", () => {
+    events = es;
+    if (polling) { clearInterval(polling); polling = null; }
+  });
+  es.addEventListener("error", () => {
+    // EventSource reconnects on its own; fall back to polling meanwhile.
+    events = null;
+    if (!polling) polling = setInterval(refresh, 3000);
+  });
 }
 
 async function upload(files) {
@@ -192,7 +216,7 @@ $("#clear").onclick = async () => {
   drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
 drop.addEventListener("drop", e => upload(e.dataTransfer.files));
 
-health(); refresh();
+health(); refresh(); connectEvents();
 </script>
 </body>
 </html>

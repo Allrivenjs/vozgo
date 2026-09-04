@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -248,5 +250,111 @@ func TestMaxUploadSize(t *testing.T) {
 	srv.ServeHTTP(rec, req)
 	if rec.Code == http.StatusAccepted {
 		t.Fatal("oversized upload should be rejected")
+	}
+}
+
+func TestEventsStreamsJobUpdates(t *testing.T) {
+	srv := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
+	}
+
+	// The subscription must be registered before the upload, otherwise the
+	// first transitions race the connection.
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.svc.Subscribers() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if srv.svc.Subscribers() == 0 {
+		t.Fatal("el stream no se registró como suscriptor")
+	}
+
+	body, ctype := uploadBody(t, "evento.ogg")
+	up, err := http.Post(ts.URL+"/api/transcribe", ctype, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up.Body.Close()
+
+	// Read events until the job reports done.
+	scanner := bufio.NewScanner(resp.Body)
+	sawQueued, sawDone := false, false
+	for scanner.Scan() && !sawDone {
+		line := scanner.Text()
+		data, found := strings.CutPrefix(line, "data: ")
+		if !found {
+			continue
+		}
+		var snap transcribe.Snapshot
+		if err := json.Unmarshal([]byte(data), &snap); err != nil {
+			t.Fatalf("evento ilegible %q: %v", data, err)
+		}
+		if snap.Filename != "evento.ogg" {
+			continue
+		}
+		switch snap.Status {
+		case transcribe.StatusQueued, transcribe.StatusRunning:
+			sawQueued = true
+		case transcribe.StatusDone:
+			sawDone = true
+			if snap.Text != "Prueba HTTP." {
+				t.Errorf("texto en el evento = %q", snap.Text)
+			}
+		case transcribe.StatusFailed:
+			t.Fatalf("el trabajo falló: %s", snap.Err)
+		}
+	}
+	if !sawQueued {
+		t.Error("no llegó ningún evento previo al final")
+	}
+	if !sawDone {
+		t.Fatal("no llegó el evento de trabajo terminado")
+	}
+}
+
+func TestEventsUnsubscribesOnDisconnect(t *testing.T) {
+	srv := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.svc.Subscribers() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if srv.svc.Subscribers() != 1 {
+		t.Fatalf("suscriptores = %d, se esperaba 1", srv.svc.Subscribers())
+	}
+
+	cancel()
+	resp.Body.Close()
+
+	deadline = time.Now().Add(2 * time.Second)
+	for srv.svc.Subscribers() > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := srv.svc.Subscribers(); got != 0 {
+		t.Errorf("suscriptores tras desconectar = %d, se esperaba 0", got)
 	}
 }

@@ -63,6 +63,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("POST /api/transcribe", s.handleUpload)
 	s.mux.HandleFunc("GET /api/jobs", s.handleJobs)
+	s.mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/jobs/{id}", s.handleJob)
 	s.mux.HandleFunc("DELETE /api/jobs/{id}", s.handleDeleteJob)
 	s.mux.HandleFunc("GET /api/jobs/{id}/download", s.handleDownload)
@@ -181,6 +182,69 @@ func (s *Server) stage(part *multipart.Part, name string) (string, error) {
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": s.svc.List()})
+}
+
+// handleEvents streams job transitions as server-sent events so the UI does not
+// have to poll. Each event carries the job's full snapshot.
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+	// Proxies that buffer would defeat the point of streaming.
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	rc := http.NewResponseController(w)
+	events, cancel := s.svc.Subscribe(64)
+	defer cancel()
+
+	// Send the current state first so a page that connects mid-run is correct
+	// without an extra fetch.
+	for _, snap := range s.svc.List() {
+		if err := writeEvent(w, snap); err != nil {
+			return
+		}
+	}
+	if err := rc.Flush(); err != nil {
+		return
+	}
+
+	// A comment line keeps idle connections alive through proxies and lets the
+	// server notice a client that went away.
+	ping := time.NewTicker(20 * time.Second)
+	defer ping.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case snap, ok := <-events:
+			if !ok {
+				return
+			}
+			if err := writeEvent(w, snap); err != nil {
+				return
+			}
+			if err := rc.Flush(); err != nil {
+				return
+			}
+		case <-ping.C:
+			if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
+				return
+			}
+			if err := rc.Flush(); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func writeEvent(w io.Writer, snap transcribe.Snapshot) error {
+	payload, err := json.Marshal(snap)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "event: job\ndata: %s\n\n", payload)
+	return err
 }
 
 func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
