@@ -1,0 +1,79 @@
+# Perfiles:
+#   docker compose --profile cpu  up --build     # portable, sin drivers
+#   docker compose --profile cuda up --build     # NVIDIA + nvidia-container-toolkit
+#
+# Lote por CLI (sin servidor):
+#   docker compose run --rm cli transcribe -out /data/out /data/in
+
+name: vozgo
+
+x-common: &common
+  restart: unless-stopped
+  environment:
+    VOZGO_MODEL: /models/${VOZGO_MODEL_NAME:-ggml-base.bin}
+    VOZGO_LANGUAGE: ${VOZGO_LANGUAGE:-auto}
+    VOZGO_FORMATS: ${VOZGO_FORMATS:-txt}
+    VOZGO_WORKERS: ${VOZGO_WORKERS:-2}
+    VOZGO_THREADS: ${VOZGO_THREADS:-4}
+    VOZGO_TEMP_DIR: /data/tmp
+  volumes:
+    - ./models:/models
+    - ./audios:/data/in
+    - ./out:/data/out
+    - vozgo-tmp:/data/tmp
+
+services:
+  vozgo:
+    <<: *common
+    profiles: [cpu]
+    build:
+      context: .
+      target: cpu
+      args:
+        VERSION: ${VOZGO_VERSION:-dev}
+    image: vozgo:cpu
+    ports:
+      - "${VOZGO_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  vozgo-cuda:
+    <<: *common
+    profiles: [cuda]
+    build:
+      context: .
+      target: cuda
+      args:
+        VERSION: ${VOZGO_VERSION:-dev}
+        CUDA_ARCH: ${CUDA_ARCH:-75}
+    image: vozgo:cuda
+    ports:
+      - "${VOZGO_PORT:-8080}:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Perfil aparte: corre un lote y termina, sin levantar el servidor.
+  cli:
+    <<: *common
+    profiles: [cli]
+    build:
+      context: .
+      target: cpu
+      args:
+        VERSION: ${VOZGO_VERSION:-dev}
+    image: vozgo:cpu
+    restart: "no"
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    command: ["transcribe", "-out", "/data/out", "/data/in"]
+
+volumes:
+  vozgo-tmp:

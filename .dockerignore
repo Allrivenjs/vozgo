@@ -1,0 +1,13 @@
+.git
+.github
+bin/
+models/
+audios/
+out/
+testdata/
+*.wav
+*.ogg
+*.mp3
+*.md
+!README.md
+.env

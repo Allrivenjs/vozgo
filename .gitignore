@@ -1,0 +1,25 @@
+# binarios
+/bin/
+/vozgo
+
+# modelos ggml (se descargan, no se versionan)
+/models/*
+!/models/.gitkeep
+
+# entrada/salida de trabajo (los directorios se versionan vacios)
+/audios/*
+!/audios/.gitkeep
+/out/*
+!/out/.gitkeep
+*.wav
+
+# transcripciones locales de prueba
+/testdata/*.txt
+/testdata/*.srt
+/testdata/*.vtt
+/testdata/*.json
+/testdata/*.md
+/testdata/audio/
+
+.env
+.DS_Store

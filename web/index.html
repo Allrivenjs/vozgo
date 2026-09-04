@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vozgo — notas de voz a texto</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9; --panel: #fff; --ink: #14161a; --muted: #666e7a;
+    --line: #e2e5ea; --accent: #2f6feb; --ok: #17803d; --bad: #b42318;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111317; --panel:#181b21; --ink:#e8eaee; --muted:#9aa3af;
+            --line:#272b33; --accent:#5b8dff; --ok:#43c47b; --bad:#f2726b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  header { padding:20px 24px; border-bottom:1px solid var(--line); display:flex;
+           align-items:baseline; gap:12px; flex-wrap:wrap; }
+  h1 { font-size:19px; margin:0; letter-spacing:-.01em; }
+  .sub { color:var(--muted); font-size:13px; }
+  main { max-width:960px; margin:0 auto; padding:24px; }
+  #drop { border:2px dashed var(--line); border-radius:var(--radius); background:var(--panel);
+          padding:36px 20px; text-align:center; transition:border-color .15s, background .15s; }
+  #drop.over { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+  #drop p { margin:6px 0; color:var(--muted); font-size:14px; }
+  button { font:inherit; border:1px solid var(--line); background:var(--panel); color:var(--ink);
+           padding:7px 13px; border-radius:8px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .bar { margin:18px 0 10px; justify-content:space-between; }
+  ul#jobs { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
+  li.job { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:13px 15px; }
+  .job h3 { margin:0 0 4px; font-size:14px; font-weight:600; word-break:break-all; }
+  .meta { color:var(--muted); font-size:12px; display:flex; gap:10px; flex-wrap:wrap; }
+  .tag { font-size:11px; padding:2px 7px; border-radius:99px; border:1px solid var(--line); }
+  .tag.queued { color:var(--muted); }
+  .tag.running { color:var(--accent); border-color:var(--accent); }
+  .tag.done { color:var(--ok); border-color:var(--ok); }
+  .tag.failed { color:var(--bad); border-color:var(--bad); }
+  .text { margin-top:10px; white-space:pre-wrap; background:var(--bg); border:1px solid var(--line);
+          border-radius:8px; padding:10px 12px; font-size:14px; max-height:280px; overflow:auto; }
+  .err { color:var(--bad); font-size:13px; margin-top:8px; }
+  .actions { margin-top:10px; }
+  .actions a { font-size:12px; color:var(--accent); text-decoration:none; margin-right:10px; }
+  .empty { color:var(--muted); font-size:14px; text-align:center; padding:24px; }
+  input[type=file] { display:none; }
+  code { background:var(--bg); padding:1px 5px; border-radius:5px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>vozgo</h1>
+  <span class="sub">notas de voz → texto, 100% local</span>
+  <span class="sub" id="health" style="margin-left:auto"></span>
+</header>
+<main>
+  <div id="drop">
+    <p><strong>Arrastra tus audios aquí</strong> (.ogg, .opus, .m4a, .mp3, .wav…)</p>
+    <p>o</p>
+    <div class="row" style="justify-content:center">
+      <button class="primary" id="pick">Elegir archivos</button>
+    </div>
+    <input type="file" id="file" multiple accept="audio/*,video/*,.ogg,.opus,.oga,.amr">
+  </div>
+
+  <div class="row bar">
+    <strong style="font-size:14px">Trabajos</strong>
+    <div class="row">
+      <button id="refresh">Refrescar</button>
+      <button id="clear">Limpiar terminados</button>
+    </div>
+  </div>
+
+  <ul id="jobs"></ul>
+  <div class="empty" id="empty">Sin trabajos todavía.</div>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const drop = $("#drop"), fileInput = $("#file"), jobsEl = $("#jobs"), emptyEl = $("#empty");
+let polling = null;
+
+async function health() {
+  try {
+    const r = await fetch("/api/health");
+    const h = await r.json();
+    $("#health").textContent = `modelo ${h.model} · idioma ${h.language} · ${h.workers} workers`;
+  } catch { $("#health").textContent = "sin conexión"; }
+}
+
+function fmtDur(ms) {
+  if (!ms) return null;
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+function jobNode(j) {
+  const li = document.createElement("li");
+  li.className = "job";
+  const meta = [];
+  if (j.language) meta.push(`idioma: ${j.language}`);
+  const d = fmtDur(j.duration_ms); if (d) meta.push(`audio: ${d}`);
+  const e = fmtDur(j.elapsed_ms); if (e) meta.push(`proceso: ${e}`);
+  if (j.segments) meta.push(`${j.segments} segmentos`);
+
+  const h3 = document.createElement("h3");
+  h3.textContent = j.filename;
+  const tag = document.createElement("span");
+  tag.className = "tag " + j.status;
+  tag.textContent = j.status;
+  h3.append(" ", tag);
+  li.append(h3);
+
+  const m = document.createElement("div");
+  m.className = "meta";
+  meta.forEach(t => { const s = document.createElement("span"); s.textContent = t; m.append(s); });
+  li.append(m);
+
+  if (j.error) {
+    const err = document.createElement("div");
+    err.className = "err"; err.textContent = j.error;
+    li.append(err);
+  }
+  if (j.text) {
+    const box = document.createElement("div");
+    box.className = "text"; box.textContent = j.text;
+    li.append(box);
+
+    const act = document.createElement("div");
+    act.className = "actions";
+    for (const f of ["txt", "srt", "vtt", "json", "md"]) {
+      const a = document.createElement("a");
+      a.href = `/api/jobs/${j.id}/download?format=${f}`;
+      a.textContent = f.toUpperCase();
+      act.append(a);
+    }
+    const copy = document.createElement("button");
+    copy.textContent = "Copiar";
+    copy.onclick = async () => {
+      try { await navigator.clipboard.writeText(j.text); copy.textContent = "Copiado"; }
+      catch { copy.textContent = "No se pudo copiar"; }
+      setTimeout(() => (copy.textContent = "Copiar"), 1500);
+    };
+    act.append(copy);
+    li.append(act);
+  }
+  return li;
+}
+
+async function refresh() {
+  const r = await fetch("/api/jobs");
+  const { jobs } = await r.json();
+  jobsEl.replaceChildren(...jobs.map(jobNode));
+  emptyEl.hidden = jobs.length > 0;
+  const busy = jobs.some(j => j.status === "queued" || j.status === "running");
+  if (busy && !polling) polling = setInterval(refresh, 1500);
+  if (!busy && polling) { clearInterval(polling); polling = null; }
+}
+
+async function upload(files) {
+  if (!files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f, f.name);
+  const r = await fetch("/api/transcribe", { method: "POST", body: fd });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({ error: r.statusText }));
+    alert("Error al subir: " + (e.error || r.status));
+    return;
+  }
+  refresh();
+}
+
+$("#pick").onclick = () => fileInput.click();
+fileInput.onchange = () => { upload(fileInput.files); fileInput.value = ""; };
+$("#refresh").onclick = refresh;
+$("#clear").onclick = async () => {
+  const r = await fetch("/api/jobs");
+  const { jobs } = await r.json();
+  await Promise.all(jobs
+    .filter(j => j.status === "done" || j.status === "failed")
+    .map(j => fetch(`/api/jobs/${j.id}`, { method: "DELETE" })));
+  refresh();
+};
+["dragenter", "dragover"].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => upload(e.dataTransfer.files));
+
+health(); refresh();
+</script>
+</body>
+</html>
