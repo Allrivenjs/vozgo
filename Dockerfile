@@ -58,13 +58,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=whisper-cuda /usr/local/bin/whisper-cli /usr/local/bin/whisper-cli
 COPY --from=go-build /out/vozgo /usr/local/bin/vozgo
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY prompts /prompts
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     && mkdir -p /models /data/in /data/out /data/tmp \
     && useradd -u 1000 -m -s /usr/sbin/nologin vozgo \
     && chown -R 1000:1000 /models /data
 USER 1000:1000
+# El prompt por defecto sesga hacia español colombiano y hacia el vocabulario de
+# trabajo: baja el WER a casi la mitad en estas notas. Se desactiva con
+# VOZGO_PROMPT_FILE="" o se reemplaza montando otro archivo sobre /prompts.
 ENV VOZGO_MODEL=/models/ggml-base.bin \
     VOZGO_LANGUAGE=auto \
+    VOZGO_PROMPT_FILE=/prompts/es-CO.txt \
     VOZGO_TEMP_DIR=/data/tmp \
     VOZGO_ADDR=:8080 \
     VOZGO_MODEL_AUTO_DOWNLOAD=1
@@ -103,13 +108,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=whisper-cpu /usr/local/bin/whisper-cli /usr/local/bin/whisper-cli
 COPY --from=go-build /out/vozgo /usr/local/bin/vozgo
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY prompts /prompts
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     && mkdir -p /models /data/in /data/out /data/tmp \
     && useradd -u 1000 -m -s /usr/sbin/nologin vozgo \
     && chown -R 1000:1000 /models /data
 USER 1000:1000
+# El prompt por defecto sesga hacia español colombiano y hacia el vocabulario de
+# trabajo: baja el WER a casi la mitad en estas notas. Se desactiva con
+# VOZGO_PROMPT_FILE="" o se reemplaza montando otro archivo sobre /prompts.
 ENV VOZGO_MODEL=/models/ggml-base.bin \
     VOZGO_LANGUAGE=auto \
+    VOZGO_PROMPT_FILE=/prompts/es-CO.txt \
     VOZGO_TEMP_DIR=/data/tmp \
     VOZGO_ADDR=:8080 \
     VOZGO_MODEL_AUTO_DOWNLOAD=1

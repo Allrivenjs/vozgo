@@ -17,10 +17,12 @@ x-common: &common
     VOZGO_WORKERS: ${VOZGO_WORKERS:-}
     VOZGO_THREADS: ${VOZGO_THREADS:-}
     VOZGO_PROMPT: ${VOZGO_PROMPT:-}
+    VOZGO_PROMPT_FILE: ${VOZGO_PROMPT_FILE:-/prompts/es-CO.txt}
     VOZGO_MAX_JOBS: ${VOZGO_MAX_JOBS:-200}
     VOZGO_JOB_TTL: ${VOZGO_JOB_TTL:-24h}
     VOZGO_TEMP_DIR: /data/tmp
   volumes:
+    - ./prompts:/prompts:ro
     - ./models:/models
     - ./audios:/data/in
     - ./out:/data/out

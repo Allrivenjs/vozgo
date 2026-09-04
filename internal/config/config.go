@@ -19,7 +19,8 @@ type Config struct {
 	Threads    int      // threads per whisper invocation, 0 = auto
 	Workers    int      // files transcribed in parallel, 0 = auto
 	BeamSize   int      // beam search width, 0 = greedy default
-	Prompt     string   // initial prompt to bias decoding
+	Prompt     string   // initial prompt to bias decoding (dialect, jargon, names)
+	PromptFile string   // file whose contents become Prompt when Prompt is empty
 	Formats    []string // output formats: txt, srt, vtt, json, md
 	WhisperBin string
 	FFmpegBin  string
@@ -87,6 +88,9 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("VOZGO_PROMPT"); v != "" {
 		c.Prompt = v
 	}
+	if v := os.Getenv("VOZGO_PROMPT_FILE"); v != "" {
+		c.PromptFile = v
+	}
 	if v := os.Getenv("VOZGO_MAX_JOBS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			c.MaxJobs = n
@@ -109,6 +113,37 @@ func SplitFormats(s string) []string {
 		}
 	}
 	return out
+}
+
+// maxPromptChars is a conservative stand-in for whisper's 224-token limit on the
+// initial prompt. Beyond it the model silently drops the beginning of the text,
+// so the caller warns instead of letting the bias vanish unnoticed.
+const maxPromptChars = 900
+
+// LoadPrompt reads PromptFile into Prompt. An explicit -prompt wins over the
+// file, and a missing file is an error: a silently ignored prompt looks exactly
+// like a model that simply did not improve.
+func (c *Config) LoadPrompt() error {
+	if c.PromptFile == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(c.PromptFile)
+	if err != nil {
+		return fmt.Errorf("no se pudo leer el prompt %q: %w", c.PromptFile, err)
+	}
+	text := strings.Join(strings.Fields(string(raw)), " ")
+	if text == "" {
+		return fmt.Errorf("el archivo de prompt %q está vacío", c.PromptFile)
+	}
+	if c.Prompt == "" {
+		c.Prompt = text
+	}
+	return nil
+}
+
+// PromptTooLong reports whether the prompt is likely to be truncated by whisper.
+func (c Config) PromptTooLong() (chars, limit int, yes bool) {
+	return len(c.Prompt), maxPromptChars, len(c.Prompt) > maxPromptChars
 }
 
 // Resolve fills in the automatic (zero) values for Workers and Threads.

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -141,5 +142,87 @@ func TestMemoryBudgetPositive(t *testing.T) {
 	// disable the memory cap.
 	if got := memoryBudget(); got <= 0 {
 		t.Errorf("memoryBudget = %d, want > 0", got)
+	}
+}
+
+func TestLoadPromptFromFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "es-CO.txt")
+	// El archivo trae saltos de línea; deben colapsarse a espacios.
+	if err := os.WriteFile(file, []byte("parce, listo pues,\n  hágale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := Default()
+	c.PromptFile = file
+	if err := c.LoadPrompt(); err != nil {
+		t.Fatalf("LoadPrompt: %v", err)
+	}
+	if c.Prompt != "parce, listo pues, hágale" {
+		t.Errorf("Prompt = %q", c.Prompt)
+	}
+}
+
+func TestExplicitPromptWinsOverFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "p.txt")
+	if err := os.WriteFile(file, []byte("del archivo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := Default()
+	c.PromptFile = file
+	c.Prompt = "explícito"
+	if err := c.LoadPrompt(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Prompt != "explícito" {
+		t.Errorf("el -prompt explícito debe ganar, quedó %q", c.Prompt)
+	}
+}
+
+func TestLoadPromptMissingFileIsAnError(t *testing.T) {
+	c := Default()
+	c.PromptFile = filepath.Join(t.TempDir(), "no-existe.txt")
+	// Un prompt ignorado en silencio se ve igual que un modelo que no mejoró.
+	if err := c.LoadPrompt(); err == nil {
+		t.Fatal("se esperaba error cuando el archivo de prompt no existe")
+	}
+}
+
+func TestLoadPromptEmptyFileIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "vacio.txt")
+	if err := os.WriteFile(file, []byte("   \n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := Default()
+	c.PromptFile = file
+	if err := c.LoadPrompt(); err == nil {
+		t.Fatal("se esperaba error con un archivo de prompt vacío")
+	}
+}
+
+func TestPromptTooLong(t *testing.T) {
+	c := Default()
+	c.Prompt = strings.Repeat("a", maxPromptChars+1)
+	if _, _, yes := c.PromptTooLong(); !yes {
+		t.Error("un prompt por encima del límite debe avisarse")
+	}
+	c.Prompt = "corto"
+	if _, _, yes := c.PromptTooLong(); yes {
+		t.Error("un prompt corto no debe avisar")
+	}
+}
+
+func TestShippedColombianPromptFitsTheLimit(t *testing.T) {
+	// El prompt que viaja en la imagen no debe pasarse del límite de whisper,
+	// porque el recorte es silencioso.
+	raw, err := os.ReadFile(filepath.Join("..", "..", "prompts", "es-CO.txt"))
+	if err != nil {
+		t.Skipf("no se encontró el prompt: %v", err)
+	}
+	c := Default()
+	c.Prompt = strings.Join(strings.Fields(string(raw)), " ")
+	if chars, limit, yes := c.PromptTooLong(); yes {
+		t.Errorf("prompts/es-CO.txt tiene %d caracteres, el límite es %d", chars, limit)
 	}
 }

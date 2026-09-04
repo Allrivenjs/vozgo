@@ -1,0 +1,10 @@
+Conversación en español colombiano, registro informal de oficina y de trabajo.
+Se usan expresiones como: parce, parcero, listo pues, hágale, de una, ahorita, ya
+mismo, chévere, bacano, berraco, una vaina, el man, la chica, ¿sí me entiende?,
+¿cierto?, ¿o qué?, qué pena, con mucho gusto, dele, arranquemos, cuadramos,
+camellar, camello, la plata, un tinto, embolatado, enredado, mamera, jartera, de
+malas, ojo con eso, mire pues, o sea, entonces, sumercé, usted.
+Términos de trabajo que aparecen: Adipa, Keycloak, Moodle, Dataverse, CRM, Power
+Automate, junta médica, medicina laboral, medicina ocupacional, ortopedia, ORL,
+historia clínica, ficha técnica, exámenes, PDF, back, front, deploy, servidor,
+DNS, dominio, repositorio, flujo, plantilla, usuario, permisos, auditoría.

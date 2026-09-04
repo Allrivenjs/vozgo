@@ -71,6 +71,7 @@ make build                 # ./bin/vozgo
 ```
 vozgo transcribe [flags] <archivo|directorio>...
 vozgo serve [flags]
+vozgo wer <directorio>
 vozgo version
 ```
 
@@ -86,6 +87,7 @@ Flags principales (`vozgo transcribe -h` para la lista completa):
 | `-threads` | auto | Hilos por transcripción (auto: nº CPU / workers) |
 | `-beam` | `0` | Beam search (0 = greedy, más rápido) |
 | `-prompt` | — | Prompt inicial para sesgar vocabulario |
+| `-prompt-file` | — | Archivo con el prompt (`prompts/es-CO.txt`) |
 | `-translate` | `false` | Traduce a inglés en vez de transcribir |
 | `-stdout` | `false` | Imprime el texto en vez de escribir archivos |
 | `-recursive` | `true` | Recorre subdirectorios |
@@ -171,15 +173,26 @@ VOZGO_MODEL_NAME=ggml-small.bin docker compose --profile cpu up
 Copia `.env.example` a `.env` y compose lo lee solo. Los flags de CLI siempre ganan
 sobre el entorno.
 
-### Vocabulario propio
+### Dialecto y vocabulario propio
 
-`-prompt` (o `VOZGO_PROMPT`) le pasa a whisper un texto inicial con el vocabulario
-que sueles usar: nombres propios, siglas y jerga que el modelo no acierta por su
-cuenta. En la medición de arriba bajó el error de 9,6 % a 7,2 % en la nota corta.
+Whisper no tiene código de idioma por país: `-lang es` es español neutro y por eso
+tropieza con el habla colombiana. La palanca es el prompt inicial, que sesga el
+decodificado hacia un dialecto y un vocabulario.
+
+vozgo trae `prompts/es-CO.txt` (español colombiano más la jerga de trabajo) y lo usa
+**por defecto en Docker**. En la medición de arriba baja el error de 9,6 % a 4,8 %, y
+arregla exactamente lo que fallaba: "en observación de huelven" pasa a ser
+"hacen observaciones, devuelven", y `pdf` a `PDF`.
 
 ```bash
-vozgo transcribe -lang es -prompt "Adipa, Keycloak, junta médica, ortopedia" ./audios
+vozgo transcribe -lang es -prompt-file prompts/es-CO.txt ./audios   # dialecto
+vozgo transcribe -lang es -prompt "Adipa, Keycloak, ORL" ./audios   # ajuste puntual
+VOZGO_PROMPT_FILE= docker compose --profile cpu up                  # desactivarlo
 ```
+
+Escribe el tuyo copiando ese archivo: texto normal, no una lista de palabras sueltas,
+y por debajo de ~900 caracteres, que es el límite que whisper aprovecha (más allá
+descarta el principio en silencio; vozgo te avisa si te pasas).
 
 ### Historial del servidor
 
@@ -191,13 +204,15 @@ guarda todo, como antes.
 ## Estructura
 
 ```
-cmd/vozgo/          CLI (transcribe, serve)
+cmd/vozgo/          CLI (transcribe, serve, wer)
 internal/audio/     ffmpeg/ffprobe: decodificación a WAV 16 kHz mono
 internal/whisper/   ejecución de whisper-cli y parseo de su JSON
 internal/transcribe/ cola, pool de workers y estado de los jobs
 internal/format/    render a txt/srt/vtt/json/md
+internal/wer/       medición de calidad contra transcripciones humanas
 internal/httpapi/   API JSON + UI embebida
 web/                index.html (sin dependencias externas)
+prompts/            prompts de dialecto (es-CO por defecto)
 scripts/            descarga de modelos y entrypoint del contenedor
 ```
 
@@ -231,17 +246,20 @@ Notas de voz reales de WhatsApp (español, audio de trabajo con jerga y siglas),
 comparadas contra transcripción humana con `scripts/wer.py` (WER = word error rate,
 menos es mejor; se normalizan mayúsculas, tildes y puntuación):
 
-| Nota | `base` | `small` | `small` + `-prompt` |
-|---|---|---|---|
-| 26 s / 83 palabras | 18,1 % | 9,6 % | **7,2 %** |
-| 112 s / 384 palabras | 25,5 % | **13,3 %** | 13,3 % |
+| Nota | `base` | `small` | `small` + prompt genérico | `small` + **es-CO** |
+|---|---|---|---|---|
+| 26 s / 83 palabras | 18,1 % | 9,6 % | 7,2 % | **4,8 %** |
+| 112 s / 384 palabras | 25,5 % | 13,3 % | 13,3 % | **11,2 %** |
 
-`small` corta el error a la mitad frente a `base` y es el punto dulce en CPU. El
-`-prompt` con el vocabulario del dominio (nombres propios, siglas) ayuda sobre todo
-en audios cortos, donde whisper tiene poco contexto propio del que agarrarse.
+`small` corta el error a la mitad frente a `base`, y el prompt de dialecto lo vuelve
+a bajar casi a la mitad: es la mejora más barata que hay, no cuesta ni un byte de
+RAM extra.
+
+Mídelo tú mismo con el propio binario:
 
 ```bash
-python3 scripts/wer.py <dir>   # espera <dir>/ref/*.txt y <dir>/<modelo>/*.txt
+vozgo wer <dir>    # espera <dir>/ref/*.txt (transcripción humana)
+                   # y <dir>/<variante>/*.txt (salidas de vozgo)
 ```
 
 Velocidad en esta máquina (16 hilos, CPU, sin GPU): `base` transcribe 3 notas

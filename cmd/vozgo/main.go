@@ -23,6 +23,7 @@ import (
 	"github.com/Allrivenjs/vozgo/internal/config"
 	"github.com/Allrivenjs/vozgo/internal/httpapi"
 	"github.com/Allrivenjs/vozgo/internal/transcribe"
+	"github.com/Allrivenjs/vozgo/internal/wer"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -52,6 +53,8 @@ func run(args []string) error {
 		return cmdTranscribe(ctx, args[1:])
 	case "serve", "server", "s":
 		return cmdServe(ctx, args[1:])
+	case "wer":
+		return cmdWER(args[1:])
 	case "version", "-v", "--version":
 		fmt.Println("vozgo", version)
 		return nil
@@ -70,6 +73,7 @@ func usage() {
 Uso:
   vozgo transcribe [flags] <archivo|directorio>...   transcribe en lote
   vozgo serve [flags]                                API HTTP + UI web
+  vozgo wer <directorio>                             mide la calidad vs. referencias
   vozgo version
 
 Ejemplos:
@@ -94,6 +98,7 @@ func bindCommon(fs *flag.FlagSet, cfg *config.Config, formats *string) {
 	fs.IntVar(&cfg.Workers, "workers", cfg.Workers, "archivos en paralelo (0 = auto)")
 	fs.IntVar(&cfg.BeamSize, "beam", cfg.BeamSize, "beam search (0 = greedy)")
 	fs.StringVar(&cfg.Prompt, "prompt", cfg.Prompt, "prompt inicial para sesgar el decodificado")
+	fs.StringVar(&cfg.PromptFile, "prompt-file", cfg.PromptFile, "archivo con el prompt (p. ej. prompts/es-CO.txt); -prompt gana sobre él")
 	fs.StringVar(&cfg.WhisperBin, "whisper-bin", cfg.WhisperBin, "binario whisper-cli")
 	fs.StringVar(&cfg.FFmpegBin, "ffmpeg-bin", cfg.FFmpegBin, "binario ffmpeg")
 	fs.StringVar(&cfg.FFprobeBin, "ffprobe-bin", cfg.FFprobeBin, "binario ffprobe")
@@ -118,6 +123,9 @@ func cmdTranscribe(ctx context.Context, args []string) error {
 		return err
 	}
 	cfg.Formats = config.SplitFormats(formats)
+	if err := cfg.LoadPrompt(); err != nil {
+		return err
+	}
 
 	inputs, err := collect(fset.Args(), recursive)
 	if err != nil {
@@ -220,6 +228,9 @@ func cmdServe(ctx context.Context, args []string) error {
 		return err
 	}
 	cfg.Formats = config.SplitFormats(formats)
+	if err := cfg.LoadPrompt(); err != nil {
+		return err
+	}
 
 	svc, err := transcribe.New(cfg)
 	if err != nil {
@@ -260,6 +271,65 @@ func cmdServe(ctx context.Context, args []string) error {
 		defer cancel()
 		return srv.Shutdown(shutCtx)
 	}
+}
+
+// cmdWER compara transcripciones contra referencias humanas. El directorio debe
+// tener ref/<nombre>.txt con la transcripción correcta y un subdirectorio por
+// variante a comparar, por ejemplo small/<nombre>.txt.
+func cmdWER(args []string) error {
+	fset := flag.NewFlagSet("wer", flag.ContinueOnError)
+	if err := fset.Parse(args); err != nil {
+		return err
+	}
+	root := "."
+	if fset.NArg() > 0 {
+		root = fset.Arg(0)
+	}
+
+	refDir := filepath.Join(root, "ref")
+	refs, err := filepath.Glob(filepath.Join(refDir, "*.txt"))
+	if err != nil {
+		return err
+	}
+	if len(refs) == 0 {
+		return fmt.Errorf("no hay referencias en %s (se esperan archivos .txt)", refDir)
+	}
+	sort.Strings(refs)
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	var variants []string
+	for _, e := range entries {
+		if e.IsDir() && e.Name() != "ref" && e.Name() != "in" {
+			variants = append(variants, e.Name())
+		}
+	}
+	if len(variants) == 0 {
+		return fmt.Errorf("no hay variantes que comparar en %s", root)
+	}
+	sort.Strings(variants)
+
+	fmt.Printf("%-16s %-12s %9s %8s %9s\n", "archivo", "variante", "palabras", "WER", "acierto")
+	for _, refPath := range refs {
+		refText, err := os.ReadFile(refPath)
+		if err != nil {
+			return err
+		}
+		name := filepath.Base(refPath)
+		for _, variant := range variants {
+			hypPath := filepath.Join(root, variant, name)
+			hypText, err := os.ReadFile(hypPath)
+			if err != nil {
+				continue // esa variante no transcribió este archivo
+			}
+			rate, words := wer.Compare(string(refText), string(hypText))
+			fmt.Printf("%-16s %-12s %9d %7.1f%% %8.1f%%\n",
+				strings.TrimSuffix(name, ".txt"), variant, words, rate*100, (1-rate)*100)
+		}
+	}
+	return nil
 }
 
 // collect expands the CLI arguments into a sorted, de-duplicated file list.
@@ -319,6 +389,11 @@ func warnOversubscribed(cfg config.Config) {
 		fmt.Fprintf(os.Stderr,
 			"vozgo: aviso: %d workers × %d hilos = %d > %d CPUs; whisper se vuelve mucho más lento. Baja -workers o -threads.\n",
 			cfg.Workers, cfg.Threads, total, ncpu)
+	}
+	if chars, limit, yes := cfg.PromptTooLong(); yes {
+		fmt.Fprintf(os.Stderr,
+			"vozgo: aviso: el prompt tiene %d caracteres y whisper solo usa ~%d; recorta el archivo o whisper descartará el principio.\n",
+			chars, limit)
 	}
 	if need, budget, yes := cfg.MemoryTight(); yes {
 		fmt.Fprintf(os.Stderr,
