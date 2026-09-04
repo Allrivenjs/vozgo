@@ -1,6 +1,7 @@
 .git
 .github
 bin/
+web/app/node_modules/
 models/
 audios/
 out/

@@ -22,6 +22,29 @@ jobs:
       - run: go test -race ./...
       - run: go build ./...
 
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/app/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: web/app
+      - run: npm run build
+        working-directory: web/app
+      # web/dist va versionado porque go:embed lo necesita: si el commit trae la
+      # UI sin recompilar, el binario embebería un bundle viejo.
+      - name: web/dist está al día
+        run: |
+          if ! git diff --quiet -- web/dist; then
+            echo "web/dist quedó desactualizado; corre 'make web' y commitea el resultado:"
+            git diff --stat -- web/dist
+            exit 1
+          fi
+
   docker:
     runs-on: ubuntu-latest
     steps:

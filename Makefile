@@ -2,10 +2,19 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 MODEL    ?= base
 
-.PHONY: build test fmt vet lint run serve model docker docker-cuda up up-cuda down clean
+.PHONY: all build web web-docker test fmt vet lint run serve model docker docker-cuda up up-cuda down clean
 
-build: ## compila ./bin/vozgo
+build: ## compila ./bin/vozgo (usa el web/dist ya versionado)
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/vozgo ./cmd/vozgo
+
+web: ## recompila la UI de React en web/dist
+	cd web/app && npm ci --no-audit --no-fund && npm run build
+
+web-docker: ## igual que `web` pero sin Node instalado
+	docker run --rm -v "$(PWD)/web:/w" -w /w/app node:22-alpine \
+		sh -c "npm ci --no-audit --no-fund && npm run build"
+
+all: web build ## UI y binario
 
 test:
 	go test ./...

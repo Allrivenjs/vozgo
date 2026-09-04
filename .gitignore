@@ -1,5 +1,9 @@
 # binarios
 /bin/
+
+# dependencias de la UI (web/dist SI se versiona: go:embed lo necesita)
+/web/app/node_modules/
+/web/app/.vite/
 /vozgo
 
 # modelos ggml (se descargan, no se versionan)

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -234,7 +235,7 @@ func TestHealthAndIndex(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("index status = %d", rec.Code)
 	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte("<title>vozgo")) {
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`id="root"`)) {
 		t.Error("index does not look like the embedded UI")
 	}
 }
@@ -405,4 +406,43 @@ func TestEventsThroughLoggingMiddleware(t *testing.T) {
 		}
 	}
 	t.Fatal("el stream se cerró sin entregar el evento final a través del middleware")
+}
+
+func TestServesBuiltUI(t *testing.T) {
+	srv := newTestServer(t)
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="root"`) {
+		t.Errorf("el index no parece el bundle de React: %.120s", body)
+	}
+
+	// El index referencia sus assets con hash; todos deben servirse.
+	refs := regexp.MustCompile(`/assets/[A-Za-z0-9._-]+`).FindAllString(body, -1)
+	if len(refs) == 0 {
+		t.Fatal("el index no referencia ningún asset")
+	}
+	for _, ref := range refs {
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, ref, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("asset %s devolvió %d", ref, rec.Code)
+		}
+		if rec.Body.Len() == 0 {
+			t.Errorf("asset %s llegó vacío", ref)
+		}
+	}
+}
+
+func TestMissingAssetIs404(t *testing.T) {
+	srv := newTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/no-existe.js", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
 }

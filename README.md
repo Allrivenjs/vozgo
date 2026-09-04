@@ -211,7 +211,8 @@ internal/transcribe/ cola, pool de workers y estado de los jobs
 internal/format/    render a txt/srt/vtt/json/md
 internal/wer/       medición de calidad contra transcripciones humanas
 internal/httpapi/   API JSON + UI embebida
-web/                index.html (sin dependencias externas)
+web/app/            UI en React + TypeScript (fuente, Vite)
+web/dist/           bundle compilado que el binario embebe
 prompts/            prompts de dialecto (es-CO por defecto)
 scripts/            descarga de modelos y entrypoint del contenedor
 ```
@@ -220,11 +221,27 @@ scripts/            descarga de modelos y entrypoint del contenedor
 
 ```bash
 make check   # gofmt + go vet + go test
-make build
+make build   # binario, usando el web/dist ya versionado
 ```
 
 Los tests no necesitan ffmpeg ni whisper: usan binarios falsos para ejercitar el
 pipeline completo, incluidas las rutas HTTP.
+
+### La UI
+
+Es React + TypeScript con Vite, en `web/app`, y el bundle compilado
+(`web/dist`) va versionado para que `go build` funcione **sin Node instalado**.
+La imagen de Docker recompila la UI desde el código en cada build, así que nunca
+puede publicar un bundle viejo.
+
+```bash
+make web           # recompila web/dist (necesita Node)
+make web-docker    # lo mismo sin Node, dentro de un contenedor
+cd web/app && npm run dev   # UI con recarga en caliente contra `vozgo serve` en :8080
+```
+
+Tras tocar la UI hay que reconstruir `web/dist` y commitearlo: es lo que embebe
+`go:embed`.
 
 ## Rendimiento y memoria
 

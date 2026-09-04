@@ -7,6 +7,7 @@
 # vozgo itself is pure Go (CGO_ENABLED=0); only whisper.cpp is compiled per backend.
 
 ARG GO_VERSION=1.25
+ARG NODE_VERSION=22
 ARG WHISPER_VERSION=v1.9.3
 ARG CUDA_IMAGE=12.6.2
 # 75 = Turing (GTX 16xx / RTX 20xx). 86 = Ampere, 89 = Ada, 61 = Pascal.
@@ -17,12 +18,23 @@ ARG CUDA_ARCH=75
 ARG BUILD_JOBS=0
 ARG CUDA_BUILD_JOBS=2
 
+# -------------------------------------------------------------------- web UI ---
+# La UI se recompila desde web/app en cada build de imagen: web/dist está en el
+# repo solo para que `go build` funcione sin Node, y así no puede quedar vieja.
+FROM node:${NODE_VERSION}-alpine AS web-build
+WORKDIR /app
+COPY web/app/package.json web/app/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/app ./
+RUN npm run build
+
 # ---------------------------------------------------------------- go binary ---
 FROM golang:${GO_VERSION}-bookworm AS go-build
 WORKDIR /src
 COPY go.mod ./
 RUN go mod download
 COPY . .
+COPY --from=web-build /dist ./web/dist
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
         -ldflags "-s -w -X main.version=${VERSION}" \

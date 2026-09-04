@@ -59,6 +59,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
+	if assets, err := web.FS(); err == nil {
+		// Los bundles llevan hash en el nombre: se pueden cachear para siempre.
+		s.mux.Handle("GET /assets/", cacheForever(http.FileServerFS(assets)))
+		// El favicon vive en la raíz del bundle y el navegador lo pide solo.
+		s.mux.Handle("GET /favicon.svg", http.FileServerFS(assets))
+		s.mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/favicon.svg", http.StatusMovedPermanently)
+		})
+	}
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("POST /api/transcribe", s.handleUpload)
@@ -78,6 +87,15 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(page)
+}
+
+// cacheForever marca los assets con hash como inmutables: cambian de nombre en
+// cada build, así que el navegador nunca sirve uno viejo por error.
+func cacheForever(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		h.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
