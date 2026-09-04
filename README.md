@@ -35,7 +35,18 @@ docker compose --profile cli run --rm cli
 
 ### Con GPU NVIDIA
 
-Requiere [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+> **Docker Desktop no sirve para esto.** El soporte de GPU de Docker Desktop existe
+> solo en Windows con WSL2 ([docs](https://docs.docker.com/desktop/features/gpu/));
+> en Linux no expone la tarjeta. El target `cuda` necesita el **daemon nativo**:
+>
+> ```bash
+> sudo systemctl enable --now docker
+> sudo pacman -S nvidia-container-toolkit          # Arch
+> sudo nvidia-ctk runtime configure --runtime=docker
+> sudo systemctl restart docker
+> docker context use default                       # volver: docker context use desktop-linux
+> ```
+
 `CUDA_ARCH` es la compute capability de tu tarjeta (75 = GTX 16xx / RTX 20xx,
 86 = RTX 30xx, 89 = RTX 40xx, 61 = GTX 10xx):
 
@@ -210,9 +221,12 @@ Velocidad en esta máquina (16 hilos, CPU, sin GPU): `base` transcribe 3 notas
 (~3 min de audio) en 8,5 s con 3 workers × 4 hilos; `small` va a ~0,5× tiempo real
 con 1 worker × 16 hilos.
 
-Si el daemon de Docker corre con poca RAM (aquí eran 3 GB: `docker info` →
-`MemTotal`), `medium` y `large` no caben con varios workers. Amplía la memoria del
-daemon o quédate en `small`.
+**Ojo con Docker Desktop:** su VM trae una asignación de memoria fija y baja
+(aquí 3 GB, visible en `docker info` → `MemTotal` y en
+`~/.docker/desktop/settings-store.json` → `MemoryMiB`). Con eso, `medium` y `large`
+no caben ni con un worker, y compilar el target `cuda` falla con
+`cannot allocate memory`. Súbela en *Settings → Resources → Memory* si quieres
+modelos grandes, o quédate en `small`, que es el punto dulce.
 
 ## Notas
 
