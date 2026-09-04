@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -357,4 +358,51 @@ func TestEventsUnsubscribesOnDisconnect(t *testing.T) {
 	if got := srv.svc.Subscribers(); got != 0 {
 		t.Errorf("suscriptores tras desconectar = %d, se esperaba 0", got)
 	}
+}
+
+// TestEventsThroughLoggingMiddleware guards the wiring the unit tests miss:
+// LogRequests wraps the ResponseWriter, and without an Unwrap method
+// http.ResponseController cannot flush, so the stream dies on connect.
+func TestEventsThroughLoggingMiddleware(t *testing.T) {
+	srv := newTestServer(t)
+	handler := LogRequests(slog.New(slog.NewTextHandler(io.Discard, nil)), srv)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.svc.Subscribers() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	body, ctype := uploadBody(t, "mw.ogg")
+	up, err := http.Post(ts.URL+"/api/transcribe", ctype, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		data, found := strings.CutPrefix(scanner.Text(), "data: ")
+		if !found {
+			continue
+		}
+		var snap transcribe.Snapshot
+		if err := json.Unmarshal([]byte(data), &snap); err != nil {
+			t.Fatalf("evento ilegible: %v", err)
+		}
+		if snap.Status == transcribe.StatusDone {
+			return // llegó el evento final a través del middleware
+		}
+	}
+	t.Fatal("el stream se cerró sin entregar el evento final a través del middleware")
 }

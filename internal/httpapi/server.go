@@ -330,3 +330,9 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.code = code
 	r.ResponseWriter.WriteHeader(code)
 }
+
+// Unwrap exposes the underlying writer to http.ResponseController. Without it,
+// Flush fails through this wrapper and the SSE stream closes immediately.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
