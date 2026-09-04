@@ -159,13 +159,19 @@ curl -N http://localhost:8080/api/events
 
 `make model MODEL=<nombre>` o `./scripts/download-model.sh <nombre>`:
 
-| Modelo | Tamaño | Notas |
-|---|---|---|
-| `tiny` | 75 MB | Muy rápido, calidad pobre en español |
-| `base` | 142 MB | Default, decente para notas cortas |
-| `small` | 466 MB | Buen equilibrio en CPU |
-| `medium` | 1,5 GB | Mejor calidad, pesado en CPU |
-| `large-v3-turbo` | 1,6 GB | Lo mejor con GPU |
+| Modelo | Tamaño | RAM necesaria | Notas |
+|---|---|---|---|
+| `tiny` | 75 MB | ~0,3 GB | Muy rápido, calidad pobre en español |
+| `base` | 142 MB | ~0,5 GB | Decente para notas cortas |
+| `small` | 466 MB | **1,3 GB medido** | Buen equilibrio en CPU, el recomendado |
+| `medium` | 1,5 GB | ~4 GB | Mejor calidad, pesado en CPU |
+| `large-v3-turbo` | 1,6 GB | ~4 GB | Lo mejor si hay GPU |
+
+**La RAM manda, y con margen**: whisper necesita cerca de **3× el tamaño del `.bin`**
+(medido: `small`, 466 MB de archivo, llega a 1337 MiB de pico). Si el contenedor no
+tiene esa memoria, el kernel mata el proceso a mitad de la carga; vozgo lo detecta y
+lo dice, en vez de repetir la última línea de whisper, que habla del audio y manda a
+depurar en la dirección equivocada.
 
 Con `VOZGO_MODEL_NAME` eliges el archivo dentro de `./models` en Docker:
 

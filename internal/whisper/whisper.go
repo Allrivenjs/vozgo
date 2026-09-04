@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -101,6 +102,15 @@ func (r Runner) Transcribe(ctx context.Context, wavPath, workDir string) (Result
 		if ctx.Err() != nil {
 			return Result{}, ctx.Err()
 		}
+		// Quedarse sin memoria es el fallo más común con modelos grandes, y
+		// whisper-cli muere sin decir nada: su última línea habla del audio, lo
+		// que manda a depurar en la dirección equivocada.
+		if wasKilled(cmd) {
+			return Result{}, fmt.Errorf(
+				"whisper-cli fue terminado por el sistema, casi siempre por falta de memoria: "+
+					"el modelo %s necesita ~3× su tamaño en RAM. Usa un modelo menor o dale más memoria al contenedor",
+				filepath.Base(r.ModelPath))
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
@@ -156,6 +166,19 @@ func parseJSON(raw []byte) (Result, error) {
 		})
 	}
 	return res, nil
+}
+
+// wasKilled reporta si el proceso murió por SIGKILL, que es lo que hace el OOM
+// killer. Docker lo traduce a estado de salida 137.
+func wasKilled(cmd *exec.Cmd) bool {
+	state := cmd.ProcessState
+	if state == nil {
+		return false
+	}
+	if status, ok := state.Sys().(syscall.WaitStatus); ok {
+		return status.Signaled() && status.Signal() == syscall.SIGKILL
+	}
+	return state.ExitCode() == 137
 }
 
 func lastLines(s string, n int) string {

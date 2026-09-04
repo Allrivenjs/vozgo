@@ -1,6 +1,10 @@
 package whisper
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -49,5 +53,43 @@ func TestParseJSON(t *testing.T) {
 func TestParseJSONInvalid(t *testing.T) {
 	if _, err := parseJSON([]byte("not json")); err == nil {
 		t.Fatal("expected an error for malformed JSON")
+	}
+}
+
+func TestTranscribeReportsOutOfMemory(t *testing.T) {
+	dir := t.TempDir()
+	// Un binario que se mata a sí mismo con SIGKILL imita al OOM killer.
+	fake := filepath.Join(dir, "whisper-cli")
+	script := "#!/bin/sh\necho \"read_audio_data: reading audio data\" >&2\nkill -9 $$\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := Runner{Bin: fake, ModelPath: filepath.Join(dir, "ggml-medium.bin")}
+	_, err := r.Transcribe(context.Background(), filepath.Join(dir, "audio.wav"), dir)
+	if err == nil {
+		t.Fatal("se esperaba error cuando el proceso muere por SIGKILL")
+	}
+	// El mensaje debe hablar de memoria, no del audio, que es la pista falsa
+	// que deja whisper-cli en su última línea.
+	if !strings.Contains(err.Error(), "memoria") {
+		t.Errorf("el error debería mencionar la memoria, dice: %v", err)
+	}
+	if strings.Contains(err.Error(), "read_audio_data") {
+		t.Errorf("el error no debería repetir la pista falsa: %v", err)
+	}
+}
+
+func TestTranscribeReportsRealFailure(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "whisper-cli")
+	script := "#!/bin/sh\necho 'error: failed to load model' >&2\nexit 1\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := Runner{Bin: fake, ModelPath: filepath.Join(dir, "ggml-base.bin")}
+	_, err := r.Transcribe(context.Background(), filepath.Join(dir, "audio.wav"), dir)
+	if err == nil || !strings.Contains(err.Error(), "failed to load model") {
+		t.Errorf("un fallo normal debe conservar el stderr de whisper: %v", err)
 	}
 }
