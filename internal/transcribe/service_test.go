@@ -2,6 +2,7 @@ package transcribe
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -222,5 +223,131 @@ func TestNewRejectsBadFormat(t *testing.T) {
 	cfg.Formats = []string{"docx"}
 	if _, err := New(cfg); err == nil {
 		t.Fatal("expected New to reject an unknown format")
+	}
+}
+
+func TestServiceEvictsOldJobsByCount(t *testing.T) {
+	cfg := fakeBins(t, "ok", 0)
+	cfg.Workers = 1
+	cfg.MaxJobs = 2
+	cfg.JobTTL = 0
+	svc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	svc.Start(context.Background())
+	var ids []string
+	for i := range 5 {
+		src := filepath.Join(dir, fmt.Sprintf("n%d.ogg", i))
+		if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		id, err := svc.Submit(Request{SourcePath: src, Filename: filepath.Base(src)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		// Let the worker finish so the job is evictable on the next Submit.
+		for range 100 {
+			if snap, ok := svc.Get(id); ok && snap.Status == StatusDone {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	svc.Wait()
+
+	if got := len(svc.List()); got > cfg.MaxJobs {
+		t.Fatalf("quedaron %d trabajos, el tope es %d", got, cfg.MaxJobs)
+	}
+	// The newest submissions must be the survivors.
+	if _, ok := svc.Get(ids[len(ids)-1]); !ok {
+		t.Error("el trabajo más reciente no debería desalojarse")
+	}
+	if _, ok := svc.Get(ids[0]); ok {
+		t.Error("el trabajo más antiguo debería haberse desalojado")
+	}
+}
+
+func TestServiceEvictsExpiredJobsByTTL(t *testing.T) {
+	cfg := fakeBins(t, "ok", 0)
+	cfg.Workers = 1
+	cfg.MaxJobs = 0
+	cfg.JobTTL = time.Millisecond
+	svc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	svc.Start(context.Background())
+	first := filepath.Join(dir, "viejo.ogg")
+	if err := os.WriteFile(first, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldID, err := svc.Submit(Request{SourcePath: first, Filename: "viejo.ogg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 100 {
+		if snap, ok := svc.Get(oldID); ok && snap.Status == StatusDone {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(10 * time.Millisecond) // pasa el TTL
+
+	second := filepath.Join(dir, "nuevo.ogg")
+	if err := os.WriteFile(second, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newID, err := svc.Submit(Request{SourcePath: second, Filename: "nuevo.ogg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Wait()
+
+	if _, ok := svc.Get(oldID); ok {
+		t.Error("el trabajo vencido debería haberse olvidado")
+	}
+	if _, ok := svc.Get(newID); !ok {
+		t.Error("el trabajo nuevo no debería desalojarse")
+	}
+}
+
+func TestRetentionNeverDropsPendingJobs(t *testing.T) {
+	// A tiny cap must not evict work that has not run yet.
+	cfg := fakeBins(t, "ok", 0)
+	cfg.Workers = 1
+	cfg.MaxJobs = 1
+	svc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	var ids []string
+	for i := range 4 {
+		src := filepath.Join(dir, fmt.Sprintf("p%d.ogg", i))
+		if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		id, err := svc.Submit(Request{SourcePath: src, Filename: filepath.Base(src)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	// Nothing has been started yet: every job must still be queued.
+	for _, id := range ids {
+		if _, ok := svc.Get(id); !ok {
+			t.Fatalf("el trabajo en cola %s se desalojó", id)
+		}
+	}
+	svc.Start(context.Background())
+	svc.Wait()
+	if got := len(svc.List()); got != cfg.MaxJobs {
+		t.Errorf("tras terminar quedaron %d, se esperaba %d", got, cfg.MaxJobs)
 	}
 }

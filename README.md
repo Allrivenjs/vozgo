@@ -156,10 +156,29 @@ VOZGO_MODEL_NAME=ggml-small.bin docker compose --profile cpu up
 
 `VOZGO_MODEL`, `VOZGO_LANGUAGE`, `VOZGO_FORMATS`, `VOZGO_WORKERS`, `VOZGO_THREADS`,
 `VOZGO_PROMPT`, `VOZGO_TEMP_DIR`, `VOZGO_ADDR`, `VOZGO_UPLOAD_DIR`,
+`VOZGO_MAX_JOBS`, `VOZGO_JOB_TTL`,
 `VOZGO_WHISPER_BIN`, `VOZGO_FFMPEG_BIN`, `VOZGO_FFPROBE_BIN`,
 `VOZGO_MODEL_AUTO_DOWNLOAD` (`0` desactiva la descarga automática en Docker).
 
-Los flags de CLI siempre ganan sobre el entorno.
+Copia `.env.example` a `.env` y compose lo lee solo. Los flags de CLI siempre ganan
+sobre el entorno.
+
+### Vocabulario propio
+
+`-prompt` (o `VOZGO_PROMPT`) le pasa a whisper un texto inicial con el vocabulario
+que sueles usar: nombres propios, siglas y jerga que el modelo no acierta por su
+cuenta. En la medición de arriba bajó el error de 9,6 % a 7,2 % en la nota corta.
+
+```bash
+vozgo transcribe -lang es -prompt "Adipa, Keycloak, junta médica, ortopedia" ./audios
+```
+
+### Historial del servidor
+
+`vozgo serve` guarda los trabajos en memoria. Para que un servidor de larga vida no
+crezca sin fin, olvida los terminados: `-max-jobs` (200 por defecto) y `-job-ttl`
+(24 h). Los trabajos en cola o en curso nunca se descartan. Con `0` en ambos se
+guarda todo, como antes.
 
 ## Estructura
 

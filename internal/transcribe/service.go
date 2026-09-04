@@ -65,6 +65,12 @@ type Job struct {
 	req Request
 }
 
+// finished reports whether the job reached a terminal state. Caller must hold
+// the service lock.
+func (j *Job) finished() bool {
+	return j.Status == StatusDone || j.Status == StatusFailed
+}
+
 // Snapshot is an immutable copy of a Job, safe to hand to another goroutine.
 type Snapshot struct {
 	ID         string            `json:"id"`
@@ -121,6 +127,11 @@ type Service struct {
 	queue chan *Job
 	wg    sync.WaitGroup
 
+	// Retention bounds the in-memory job history of a long-running server:
+	// without it, `vozgo serve` grows for as long as people keep uploading.
+	maxJobs int
+	jobTTL  time.Duration
+
 	mu    sync.RWMutex
 	jobs  map[string]*Job
 	order []string
@@ -158,6 +169,8 @@ func New(cfg config.Config) (*Service, error) {
 		formats: formats,
 		queue:   make(chan *Job, 256),
 		jobs:    make(map[string]*Job),
+		maxJobs: cfg.MaxJobs,
+		jobTTL:  cfg.JobTTL,
 	}, nil
 }
 
@@ -207,6 +220,7 @@ func (s *Service) Submit(req Request) (string, error) {
 	s.mu.Lock()
 	s.jobs[job.ID] = job
 	s.order = append(s.order, job.ID)
+	s.prune()
 	s.mu.Unlock()
 
 	s.emit(job)
@@ -344,6 +358,14 @@ func (s *Service) process(ctx context.Context, job *Job) {
 	if req.DeleteSource {
 		_ = os.Remove(req.SourcePath)
 	}
+
+	// Also prune here, not just on Submit: a server that goes quiet after a
+	// burst should release the history instead of holding it until the next
+	// upload.
+	s.mu.Lock()
+	s.prune()
+	s.mu.Unlock()
+
 	s.emit(job)
 }
 
@@ -399,6 +421,51 @@ func (s *Service) writeOutputs(job *Job, req Request, res whisper.Result) (map[s
 		paths[f] = path
 	}
 	return paths, nil
+}
+
+// prune drops finished jobs that are older than the TTL, then the oldest
+// finished jobs above the count cap. Queued and running jobs are never dropped.
+// Caller must hold s.mu.
+func (s *Service) prune() {
+	if s.jobTTL <= 0 && s.maxJobs <= 0 {
+		return
+	}
+	now := time.Now()
+	kept := s.order[:0]
+	for _, id := range s.order {
+		job, ok := s.jobs[id]
+		if !ok {
+			continue
+		}
+		expired := s.jobTTL > 0 && job.finished() &&
+			!job.FinishedAt.IsZero() && now.Sub(job.FinishedAt) > s.jobTTL
+		if expired {
+			delete(s.jobs, id)
+			continue
+		}
+		kept = append(kept, id)
+	}
+	s.order = kept
+
+	if s.maxJobs <= 0 || len(s.order) <= s.maxJobs {
+		return
+	}
+	// Walk oldest first, evicting finished jobs until the count fits.
+	excess := len(s.order) - s.maxJobs
+	kept = make([]string, 0, len(s.order))
+	for _, id := range s.order {
+		job, ok := s.jobs[id]
+		if !ok {
+			continue
+		}
+		if excess > 0 && job.finished() {
+			delete(s.jobs, id)
+			excess--
+			continue
+		}
+		kept = append(kept, id)
+	}
+	s.order = kept
 }
 
 func (s *Service) emit(job *Job) {

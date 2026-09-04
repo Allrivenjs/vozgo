@@ -214,6 +214,8 @@ func cmdServe(ctx context.Context, args []string) error {
 	fset.StringVar(&addr, "addr", envOr("VOZGO_ADDR", ":8080"), "dirección de escucha")
 	fset.StringVar(&uploadDir, "upload-dir", envOr("VOZGO_UPLOAD_DIR", ""), "directorio para subidas (vacío = temporal)")
 	fset.Int64Var(&maxUploadMB, "max-upload-mb", 256, "tamaño máximo por request en MiB")
+	fset.IntVar(&cfg.MaxJobs, "max-jobs", cfg.MaxJobs, "trabajos terminados que se recuerdan (0 = sin límite)")
+	fset.DurationVar(&cfg.JobTTL, "job-ttl", cfg.JobTTL, "cuánto se recuerda un trabajo terminado (0 = para siempre)")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}

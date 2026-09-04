@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config describes how audio is decoded and transcribed.
@@ -25,6 +26,11 @@ type Config struct {
 	FFprobeBin string
 	TempDir    string
 	KeepWAV    bool
+
+	// MaxJobs and JobTTL bound the job history kept by `vozgo serve`.
+	// 0 disables that bound. They do not affect one-shot CLI runs.
+	MaxJobs int
+	JobTTL  time.Duration
 }
 
 // Default returns the configuration used when no flags or env vars are set.
@@ -35,6 +41,8 @@ func Default() Config {
 		Threads:    0, // resolved by Resolve()
 		Workers:    0, // resolved by Resolve()
 		Formats:    []string{"txt"},
+		MaxJobs:    200,
+		JobTTL:     24 * time.Hour,
 		WhisperBin: "whisper-cli",
 		FFmpegBin:  "ffmpeg",
 		FFprobeBin: "ffprobe",
@@ -78,6 +86,16 @@ func (c *Config) ApplyEnv() {
 	}
 	if v := os.Getenv("VOZGO_PROMPT"); v != "" {
 		c.Prompt = v
+	}
+	if v := os.Getenv("VOZGO_MAX_JOBS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			c.MaxJobs = n
+		}
+	}
+	if v := os.Getenv("VOZGO_JOB_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			c.JobTTL = d
+		}
 	}
 }
 

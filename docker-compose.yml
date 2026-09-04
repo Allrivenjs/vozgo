@@ -16,6 +16,9 @@ x-common: &common
     # Vacíos = vozgo los calcula según CPU y memoria disponible.
     VOZGO_WORKERS: ${VOZGO_WORKERS:-}
     VOZGO_THREADS: ${VOZGO_THREADS:-}
+    VOZGO_PROMPT: ${VOZGO_PROMPT:-}
+    VOZGO_MAX_JOBS: ${VOZGO_MAX_JOBS:-200}
+    VOZGO_JOB_TTL: ${VOZGO_JOB_TTL:-24h}
     VOZGO_TEMP_DIR: /data/tmp
   volumes:
     - ./models:/models
