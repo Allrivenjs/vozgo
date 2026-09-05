@@ -2,7 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 MODEL    ?= base
 
-.PHONY: all build web web-docker test fmt vet lint run serve model docker docker-cuda up up-cuda down clean
+.PHONY: all install build web web-docker test fmt vet lint run serve model docker docker-cuda up up-cuda down clean
 
 build: ## compila ./bin/vozgo (usa el web/dist ya versionado)
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/vozgo ./cmd/vozgo
@@ -49,6 +49,13 @@ up-cuda:
 
 down:
 	docker compose --profile cpu --profile cuda --profile cli down
+
+install: docker ## instala el comando `vozgo` en ~/.local/bin y copia modelos y prompts
+	mkdir -p $(HOME)/.local/bin $(HOME)/.vozgo/models $(HOME)/.vozgo/prompts
+	install -m 755 scripts/vozgo $(HOME)/.local/bin/vozgo
+	cp -n models/*.bin $(HOME)/.vozgo/models/ 2>/dev/null || true
+	cp prompts/*.txt $(HOME)/.vozgo/prompts/
+	@echo "listo: vozgo ~/Downloads/notas"
 
 clean:
 	rm -rf bin

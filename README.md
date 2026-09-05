@@ -14,6 +14,35 @@ audio (.ogg/.opus/.m4a/.mp3/...)  →  ffmpeg (16 kHz mono PCM)  →  whisper.cp
 - **Docker con dos targets**: `cpu` (portable) y `cuda` (NVIDIA).
 - **Salidas**: `txt`, `srt`, `vtt`, `json` (con timestamps por segmento) y `md`.
 
+## El comando `vozgo`
+
+Para usarlo a diario sin recordar montajes de Docker:
+
+```bash
+make install     # construye la imagen, instala ~/.local/bin/vozgo
+                 # y copia modelos y prompts a ~/.vozgo
+```
+
+Desde ahí, en cualquier carpeta:
+
+```bash
+vozgo ~/Downloads/notas                  # transcribe todo, deja los .txt al lado
+vozgo nota.ogg                           # un solo archivo
+vozgo ~/Downloads/notas -o ~/textos      # salida en otra carpeta
+vozgo ~/Downloads/notas --merge todo.md  # además, todo junto y en orden
+vozgo --serve                            # la UI web en http://localhost:8080
+```
+
+Cualquier otro flag pasa tal cual a `vozgo transcribe`
+(`-formats txt,srt`, `-prompt`, `-workers`…). El modelo y el idioma salen de
+`VOZGO_MODEL_NAME` y `VOZGO_LANGUAGE`, con `ggml-large-v3-turbo.bin` y `es` por
+defecto.
+
+> **Docker Desktop solo monta rutas compartidas.** Si transcribes desde una carpeta
+> fuera de ellas, el contenedor no la verá: agrégala en *Settings → Resources →
+> File Sharing*. Las rutas actuales se ven en `~/.docker/desktop/settings-store.json`
+> (`FilesharingDirectories`).
+
 ## Arranque rápido (Docker, CPU)
 
 ```bash

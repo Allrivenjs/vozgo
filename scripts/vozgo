@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Envoltorio de vozgo para usarlo desde cualquier carpeta sin recordar montajes.
+#
+#   vozgo ~/Downloads/notas                 # transcribe la carpeta, deja los .txt ahí
+#   vozgo nota.ogg                          # un solo archivo
+#   vozgo ~/Downloads/notas -o ~/textos     # salida en otra carpeta
+#   vozgo ~/Downloads/notas --merge todo.md # además, todo junto en un archivo
+#   vozgo --serve                           # levanta la UI web en :8080
+#
+# Cualquier otro flag se pasa tal cual a `vozgo transcribe`.
+set -euo pipefail
+
+IMAGE="${VOZGO_IMAGE:-vozgo:cpu}"
+HOME_DIR="${VOZGO_HOME:-$HOME/.vozgo}"
+MODEL="${VOZGO_MODEL_NAME:-ggml-large-v3-turbo.bin}"
+LANG_CODE="${VOZGO_LANGUAGE:-es}"
+PORT="${VOZGO_PORT:-8080}"
+
+mkdir -p "$HOME_DIR/models" "$HOME_DIR/prompts"
+
+if [[ "${1:-}" == "--serve" ]]; then
+    exec docker run --rm -p "$PORT:8080" \
+        -v "$HOME_DIR/models:/models" \
+        -v "$HOME_DIR/prompts:/prompts:ro" \
+        -e "VOZGO_MODEL=/models/$MODEL" \
+        -e "VOZGO_LANGUAGE=$LANG_CODE" \
+        "$IMAGE" serve
+fi
+
+if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+fi
+
+input="$1"; shift
+[[ -e "$input" ]] || { echo "vozgo: no existe $input" >&2; exit 1; }
+input="$(realpath "$input")"
+
+# Un archivo suelto se monta por su carpeta y se apunta solo a él.
+if [[ -d "$input" ]]; then
+    in_dir="$input"; target="/data/in"
+else
+    in_dir="$(dirname "$input")"; target="/data/in/$(basename "$input")"
+fi
+
+out_dir="$in_dir"
+args=()
+merge=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|--out) out_dir="$(realpath -m "$2")"; shift 2 ;;
+        --merge)  merge="$2"; shift 2 ;;
+        *) args+=("$1"); shift ;;
+    esac
+done
+mkdir -p "$out_dir"
+
+merge_args=()
+if [[ -n "$merge" ]]; then
+    # El archivo unido se escribe dentro de la carpeta de salida.
+    merge_args=(-merge "/data/out/$(basename "$merge")")
+fi
+
+docker run --rm \
+    -v "$HOME_DIR/models:/models" \
+    -v "$HOME_DIR/prompts:/prompts:ro" \
+    -v "$in_dir:/data/in:ro" \
+    -v "$out_dir:/data/out" \
+    "$IMAGE" transcribe \
+        -model "/models/$MODEL" \
+        -lang "$LANG_CODE" \
+        -prompt-file "/prompts/$(basename "${VOZGO_PROMPT_FILE:-es-CO.txt}")" \
+        -out /data/out \
+        "${merge_args[@]}" \
+        "${args[@]}" \
+        "$target"
