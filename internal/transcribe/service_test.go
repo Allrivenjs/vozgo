@@ -2,6 +2,7 @@ package transcribe
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -349,5 +350,118 @@ func TestRetentionNeverDropsPendingJobs(t *testing.T) {
 	svc.Wait()
 	if got := len(svc.List()); got != cfg.MaxJobs {
 		t.Errorf("tras terminar quedaron %d, se esperaba %d", got, cfg.MaxJobs)
+	}
+}
+
+func TestWaitForReturnsResultsInOrder(t *testing.T) {
+	cfg := fakeBins(t, "hola", 0)
+	cfg.Workers = 2
+	svc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Start(context.Background())
+
+	dir := t.TempDir()
+	var ids []string
+	for i := range 3 {
+		src := filepath.Join(dir, fmt.Sprintf("n%d.ogg", i))
+		if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		id, err := svc.Submit(Request{SourcePath: src, Filename: filepath.Base(src)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+
+	snaps, err := svc.WaitFor(context.Background(), ids)
+	if err != nil {
+		t.Fatalf("WaitFor: %v", err)
+	}
+	if len(snaps) != 3 {
+		t.Fatalf("devolvió %d resultados, se esperaban 3", len(snaps))
+	}
+	// El orden de salida es el de entrada, aunque terminen en otro orden.
+	for i, snap := range snaps {
+		want := fmt.Sprintf("n%d.ogg", i)
+		if snap.Filename != want {
+			t.Errorf("resultado %d = %s, se esperaba %s", i, snap.Filename, want)
+		}
+		if snap.Status != StatusDone {
+			t.Errorf("%s quedó en %s", snap.Filename, snap.Status)
+		}
+	}
+	// La cola sigue abierta: se puede encolar más trabajo después.
+	src := filepath.Join(dir, "otra.ogg")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Submit(Request{SourcePath: src, Filename: "otra.ogg"}); err != nil {
+		t.Errorf("la cola debería seguir abierta tras WaitFor: %v", err)
+	}
+	svc.Wait()
+}
+
+func TestWaitForAlreadyFinished(t *testing.T) {
+	cfg := fakeBins(t, "ya", 0)
+	cfg.Workers = 1
+	svc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Start(context.Background())
+	src := filepath.Join(t.TempDir(), "n.ogg")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := svc.Submit(Request{SourcePath: src, Filename: "n.ogg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 200 {
+		if snap, ok := svc.Get(id); ok && snap.Status == StatusDone {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Si ya terminó antes de llamar, WaitFor debe devolverlo igual y no colgarse.
+	snaps, err := svc.WaitFor(context.Background(), []string{id})
+	if err != nil || len(snaps) != 1 || snaps[0].Status != StatusDone {
+		t.Fatalf("WaitFor sobre un trabajo terminado: %v, %+v", err, snaps)
+	}
+}
+
+func TestWaitForUnknownID(t *testing.T) {
+	cfg := fakeBins(t, "x", 0)
+	svc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.WaitFor(context.Background(), []string{"noexiste"}); err == nil {
+		t.Fatal("se esperaba error con un id desconocido")
+	}
+}
+
+func TestWaitForRespectsContext(t *testing.T) {
+	cfg := fakeBins(t, "x", 0)
+	svc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sin Start no hay workers: el trabajo nunca avanza y debe mandar el ctx.
+	src := filepath.Join(t.TempDir(), "n.ogg")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := svc.Submit(Request{SourcePath: src, Filename: "n.ogg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := svc.WaitFor(ctx, []string{id}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, se esperaba DeadlineExceeded", err)
 	}
 }

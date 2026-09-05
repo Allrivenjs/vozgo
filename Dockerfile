@@ -31,7 +31,7 @@ RUN npm run build
 # ---------------------------------------------------------------- go binary ---
 FROM golang:${GO_VERSION}-bookworm AS go-build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web-build /dist ./web/dist

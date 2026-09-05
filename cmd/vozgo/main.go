@@ -59,6 +59,8 @@ func run(args []string) error {
 		return cmdServe(ctx, args[1:])
 	case "wer":
 		return cmdWER(args[1:])
+	case "mcp":
+		return cmdMCP(ctx, args[1:])
 	case "version", "-v", "--version":
 		fmt.Println("vozgo", version)
 		return nil
@@ -78,6 +80,7 @@ Uso:
   vozgo transcribe [flags] <archivo|directorio>...   transcribe en lote
   vozgo serve [flags]                                API HTTP + UI web
   vozgo wer <directorio>                             mide la calidad vs. referencias
+  vozgo mcp [flags]                                  servidor MCP por stdio, para agentes
   vozgo version
 
 Ejemplos:

@@ -329,6 +329,55 @@ func (s *Service) Delete(id string) bool {
 	return true
 }
 
+// WaitFor espera a que los trabajos indicados terminen y devuelve su estado
+// final, en el mismo orden. A diferencia de Wait, no cierra la cola: sirve para
+// un servidor de larga vida que atiende peticiones una tras otra.
+//
+// Se suscribe antes de mirar el estado para no perderse una transición que
+// ocurra entre ambas cosas.
+func (s *Service) WaitFor(ctx context.Context, ids []string) ([]Snapshot, error) {
+	events, cancel := s.Subscribe(len(ids)*4 + 16)
+	defer cancel()
+
+	pending := make(map[string]bool, len(ids))
+	done := make(map[string]Snapshot, len(ids))
+	for _, id := range ids {
+		snap, ok := s.Get(id)
+		if !ok {
+			return nil, fmt.Errorf("trabajo %s desconocido", id)
+		}
+		if snap.Status == StatusDone || snap.Status == StatusFailed {
+			done[id] = snap
+			continue
+		}
+		pending[id] = true
+	}
+
+	for len(pending) > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case snap, ok := <-events:
+			if !ok {
+				return nil, errors.New("el servicio dejó de emitir eventos")
+			}
+			if !pending[snap.ID] {
+				continue
+			}
+			if snap.Status == StatusDone || snap.Status == StatusFailed {
+				done[snap.ID] = snap
+				delete(pending, snap.ID)
+			}
+		}
+	}
+
+	out := make([]Snapshot, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, done[id])
+	}
+	return out, nil
+}
+
 // Wait closes the queue and blocks until every worker drains. Submitting after
 // Wait panics, so the CLI calls it once, after enqueuing everything.
 func (s *Service) Wait() {

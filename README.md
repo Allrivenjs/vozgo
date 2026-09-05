@@ -31,6 +31,7 @@ vozgo nota.ogg                           # un solo archivo
 vozgo ~/Downloads/notas -o ~/textos      # salida en otra carpeta
 vozgo ~/Downloads/notas --merge todo.md  # además, todo junto y en orden
 vozgo --serve                            # la UI web en http://localhost:8080
+vozgo --mcp                              # servidor MCP para agentes (stdio)
 ```
 
 Cualquier otro flag pasa tal cual a `vozgo transcribe`
@@ -42,6 +43,54 @@ defecto.
 > fuera de ellas, el contenedor no la verá: agrégala en *Settings → Resources →
 > File Sharing*. Las rutas actuales se ven en `~/.docker/desktop/settings-store.json`
 > (`FilesharingDirectories`).
+
+## Para agentes: servidor MCP
+
+`vozgo mcp` habla [Model Context Protocol](https://modelcontextprotocol.io) por
+stdio, así que Claude Code, Codex o cualquier cliente MCP pueden transcribir
+directamente, sin que tú muevas archivos.
+
+| Herramienta | Qué hace |
+|---|---|
+| `transcribe` | Recibe la ruta de un audio o de una carpeta y devuelve el texto. Acepta `language`, `prompt` y `recursive` |
+| `info` | Modelo en uso, modelos disponibles, idioma, workers y el límite de rutas |
+
+**Claude Code.** Este repo ya trae `.mcp.json`, así que dentro del proyecto se
+detecta solo. Para tenerlo en cualquier carpeta:
+
+```bash
+claude mcp add vozgo -- vozgo --mcp
+```
+
+**Codex.** En `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.vozgo]
+command = "vozgo"
+args = ["--mcp"]
+startup_timeout_sec = 30
+tool_timeout_sec = 600     # transcribir una carpeta larga tarda
+```
+
+o `codex mcp add vozgo -- vozgo --mcp`.
+
+Después basta con pedirlo en lenguaje natural: *"transcribe las notas de voz de
+~/Downloads/test y resúmeme los acuerdos"*.
+
+### El límite de rutas
+
+`vozgo --mcp` arranca el contenedor con `-root $HOME` y monta tu carpeta personal
+en **solo lectura**: el agente puede transcribir lo tuyo, pero no salir de ahí ni
+escribir nada. Una ruta fuera del límite se rechaza con un error claro:
+
+```
+/etc/hosts está fuera de /home/tu-usuario, que es la única carpeta permitida
+```
+
+Se ajusta con `VOZGO_MCP_ROOT=/ruta/concreta vozgo --mcp`.
+
+> Si prefieres el binario nativo en vez del contenedor (`vozgo mcp` a secas),
+> necesitas `whisper-cli` y `ffmpeg` instalados en el host.
 
 ## Arranque rápido (Docker, CPU)
 
@@ -101,6 +150,7 @@ make build                 # ./bin/vozgo
 vozgo transcribe [flags] <archivo|directorio>...
 vozgo serve [flags]
 vozgo wer <directorio>
+vozgo mcp [flags]
 vozgo version
 ```
 

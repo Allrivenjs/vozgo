@@ -6,6 +6,7 @@
 #   vozgo ~/Downloads/notas -o ~/textos     # salida en otra carpeta
 #   vozgo ~/Downloads/notas --merge todo.md # además, todo junto en un archivo
 #   vozgo --serve                           # levanta la UI web en :8080
+#   vozgo --mcp                             # servidor MCP por stdio, para agentes
 #
 # Cualquier otro flag se pasa tal cual a `vozgo transcribe`.
 set -euo pipefail
@@ -17,6 +18,23 @@ LANG_CODE="${VOZGO_LANGUAGE:-es}"
 PORT="${VOZGO_PORT:-8080}"
 
 mkdir -p "$HOME_DIR/models" "$HOME_DIR/prompts"
+
+# Servidor MCP: el agente habla por stdin/stdout con el contenedor. Se monta
+# $HOME en la misma ruta para que las rutas que pase el agente sean válidas
+# dentro del contenedor, y en solo lectura porque transcribir no escribe nada.
+if [[ "${1:-}" == "--mcp" ]]; then
+    shift
+    exec docker run --rm -i \
+        -v "$HOME_DIR/models:/models" \
+        -v "$HOME_DIR/prompts:/prompts:ro" \
+        -v "$HOME:$HOME:ro" \
+        "$IMAGE" mcp \
+            -model "/models/$MODEL" \
+            -lang "$LANG_CODE" \
+            -prompt-file "/prompts/$(basename "${VOZGO_PROMPT_FILE:-es-CO.txt}")" \
+            -root "${VOZGO_MCP_ROOT:-$HOME}" \
+            "$@"
+fi
 
 if [[ "${1:-}" == "--serve" ]]; then
     exec docker run --rm -p "$PORT:8080" \
